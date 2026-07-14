@@ -30,6 +30,7 @@ struct TranscriptionFeature {
 		var isCapturingSelectedTextForRefinement = false
 		var refinedHotKeyReleasedWhileCapturingSelection = false
 		var selectedTextForRefinement: SelectedTextCapture?
+		var originalTranscriptForRefinement: String?
     var isPrewarming: Bool = false
 		var forcedRefinementMode: RefinementMode?
 		var activeRecordingHotkey: HotKey?
@@ -452,6 +453,7 @@ private extension TranscriptionFeature {
       )
     }
     state.isRecording = true
+		state.originalTranscriptForRefinement = nil
 		state.forcedRefinementMode = forcedRefinementMode
 		state.activeRecordingHotkey = forcedRefinementMode == nil ? state.hexSettings.hotkey : state.hexSettings.refinedHotkey
 		state.activeMinimumKeyTime = forcedRefinementMode == nil ? state.hexSettings.minimumKeyTime : state.hexSettings.refinedMinimumKeyTime
@@ -746,6 +748,7 @@ private extension TranscriptionFeature {
 
 	let refinementInput = selectedText?.text ?? modifiedResult
 	let spokenInstruction = selectedText == nil ? nil : modifiedResult
+	state.originalTranscriptForRefinement = modifiedResult.isEmpty ? nil : modifiedResult
 	state.isRefining = true
 	return .run { [refinement] send in
 		do {
@@ -785,6 +788,8 @@ private extension TranscriptionFeature {
 		state.refinedHotKeyReleasedWhileCapturingSelection = false
 		let selectedText = state.selectedTextForRefinement
 		state.selectedTextForRefinement = nil
+		let originalTranscript = state.originalTranscriptForRefinement
+		state.originalTranscriptForRefinement = nil
 		state.forcedRefinementMode = nil
 		state.activeRecordingHotkey = nil
 		state.activeMinimumKeyTime = nil
@@ -800,7 +805,8 @@ private extension TranscriptionFeature {
 		sourceAppName: sourceAppName,
 		audioURL: audioURL,
 		transcriptionHistory: transcriptionHistory,
-		selectedText: selectedText
+		selectedText: selectedText,
+		originalTranscript: originalTranscript
 	)
   }
 
@@ -811,7 +817,8 @@ private extension TranscriptionFeature {
 		sourceAppName: String?,
 		audioURL: URL,
 		transcriptionHistory: Shared<TranscriptionHistory>,
-		selectedText: SelectedTextCapture? = nil
+		selectedText: SelectedTextCapture? = nil,
+		originalTranscript: String? = nil
 	) -> Effect<Action> {
 		.run { _ in
 			await finalizeRecordingAndStoreTranscript(
@@ -821,7 +828,8 @@ private extension TranscriptionFeature {
 				sourceAppName: sourceAppName,
 				audioURL: audioURL,
 				transcriptionHistory: transcriptionHistory,
-				selectedText: selectedText
+				selectedText: selectedText,
+				originalTranscript: originalTranscript
 			)
 		}
 		.cancellable(id: CancelID.transcription)
@@ -849,6 +857,7 @@ private extension TranscriptionFeature {
 	state.isRefining = false
 		let selectedText = state.selectedTextForRefinement
 		state.selectedTextForRefinement = nil
+		state.originalTranscriptForRefinement = nil
 		state.forcedRefinementMode = nil
 		state.activeRecordingHotkey = nil
 		state.activeMinimumKeyTime = nil
@@ -887,7 +896,8 @@ private extension TranscriptionFeature {
     sourceAppName: String?,
 		audioURL: URL,
 		transcriptionHistory: Shared<TranscriptionHistory>,
-		selectedText: SelectedTextCapture? = nil
+		selectedText: SelectedTextCapture? = nil,
+		originalTranscript: String? = nil
   ) async {
     @Shared(.hexSettings) var hexSettings: HexSettings
 
@@ -899,7 +909,7 @@ private extension TranscriptionFeature {
 
     if hexSettings.saveTranscriptionHistory {
       do {
-        _ = try await persistHistoryEntry(
+			if let persistedTranscript = try await persistHistoryEntry(
           text: result,
           audioURL: audioURL,
           duration: duration,
@@ -907,7 +917,13 @@ private extension TranscriptionFeature {
           sourceAppName: sourceAppName,
           status: .completed,
           transcriptionHistory: transcriptionHistory
-        )
+			), let originalTranscript, originalTranscript != result {
+				var sourceTranscript = persistedTranscript
+				sourceTranscript.id = UUID()
+				sourceTranscript.text = originalTranscript
+				sourceTranscript.isRefinementSource = true
+				await insertHistoryEntry(sourceTranscript, at: 1, transcriptionHistory: transcriptionHistory)
+			}
       } catch {
         // Storage failure on the success path: log, clean up the temp file (still at original
         // location since save threw before move-item completed), but DO NOT mark as failed —
@@ -964,21 +980,26 @@ private extension TranscriptionFeature {
       status
     )
 
-    transcriptionHistory.withLock { history in
-      history.history.insert(transcript, at: 0)
-
-      if let maxEntries = hexSettings.maxHistoryEntries, maxEntries > 0 {
-        while history.history.count > maxEntries {
-          if let removedTranscript = history.history.popLast() {
-            Task { [transcriptPersistence] in
-              try? await transcriptPersistence.deleteAudio(removedTranscript)
-            }
-          }
-        }
-      }
-    }
+		await insertHistoryEntry(transcript, at: 0, transcriptionHistory: transcriptionHistory)
     return transcript
   }
+
+	func insertHistoryEntry(_ transcript: Transcript, at index: Int, transcriptionHistory: Shared<TranscriptionHistory>) async {
+		@Shared(.hexSettings) var hexSettings: HexSettings
+		var audioToDelete: [Transcript] = []
+		transcriptionHistory.withLock { history in
+			history.history.insert(transcript, at: min(index, history.history.count))
+			guard let maxEntries = hexSettings.maxHistoryEntries, maxEntries > 0 else { return }
+			while history.history.count > maxEntries, let removedTranscript = history.history.popLast() {
+				if !history.history.contains(where: { $0.audioPath == removedTranscript.audioPath }) {
+					audioToDelete.append(removedTranscript)
+				}
+			}
+		}
+		for transcript in audioToDelete {
+			try? await transcriptPersistence.deleteAudio(transcript)
+		}
+	}
 
   /// Persist an incomplete recording (cancelled or failed) when duration meets the 1.0s
   /// threshold and history is enabled; otherwise delete the temp WAV. Storage failures
@@ -1036,6 +1057,7 @@ private extension TranscriptionFeature {
 		state.refinedHotKeyReleasedWhileCapturingSelection = false
 		let selectedText = state.selectedTextForRefinement
 		state.selectedTextForRefinement = nil
+		state.originalTranscriptForRefinement = nil
     state.isRecording = false
 		state.forcedRefinementMode = nil
 		state.activeRecordingHotkey = nil
@@ -1108,6 +1130,7 @@ private extension TranscriptionFeature {
 	state.activeRecordingSource = nil
 		let selectedText = state.selectedTextForRefinement
 		state.selectedTextForRefinement = nil
+		state.originalTranscriptForRefinement = nil
 
     // Silently discard - no sound effect
     return .merge(

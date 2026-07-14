@@ -193,8 +193,9 @@ struct HistoryFeature {
 				_ = state.$transcriptionHistory.withLock { history in
 					history.history.remove(at: index)
 				}
+				let recordingIsStillReferenced = state.transcriptionHistory.history.contains { $0.audioPath == transcript.audioPath }
 
-				return deleteAudioEffect(for: [transcript])
+				return recordingIsStillReferenced ? .none : deleteAudioEffect(for: [transcript])
 
 			case .deleteAllTranscripts:
 				return .send(.confirmDeleteAll)
@@ -246,6 +247,11 @@ struct TranscriptView: View {
 						if let appName = transcript.sourceAppName {
 							Text(appName)
 						}
+						Text("•")
+					}
+
+					if transcript.isRefinementSource == true {
+						Label("Original", systemImage: "waveform")
 						Text("•")
 					}
 					

@@ -7,7 +7,8 @@ public struct TranscriptPersistenceClient: Sendable {
         _ audioURL: URL,
         _ duration: TimeInterval,
         _ sourceAppBundleID: String?,
-        _ sourceAppName: String?
+        _ sourceAppName: String?,
+        _ status: TranscriptStatus
     ) async throws -> Transcript
     
     public var deleteAudio: @Sendable (_ transcript: Transcript) async throws -> Void
@@ -16,7 +17,7 @@ public struct TranscriptPersistenceClient: Sendable {
 extension TranscriptPersistenceClient: DependencyKey {
     public static let liveValue: TranscriptPersistenceClient = {
         return TranscriptPersistenceClient(
-            save: { result, audioURL, duration, sourceAppBundleID, sourceAppName in
+            save: { result, audioURL, duration, sourceAppBundleID, sourceAppName, status in
                 let fm = FileManager.default
                 let recordingsFolder = try URL.hexApplicationSupport.appendingPathComponent("Recordings", isDirectory: true)
                 try fm.createDirectory(at: recordingsFolder, withIntermediateDirectories: true)
@@ -31,7 +32,8 @@ extension TranscriptPersistenceClient: DependencyKey {
                     audioPath: finalURL,
                     duration: duration,
                     sourceAppBundleID: sourceAppBundleID,
-                    sourceAppName: sourceAppName
+                    sourceAppName: sourceAppName,
+                    status: status
                 )
             },
             deleteAudio: { transcript in
@@ -41,7 +43,7 @@ extension TranscriptPersistenceClient: DependencyKey {
     }()
     
     public static let testValue = TranscriptPersistenceClient(
-        save: { _, _, _, _, _ in
+        save: { _, _, _, _, _, _ in
             Transcript(timestamp: Date(), text: "", audioPath: URL(fileURLWithPath: "/"), duration: 0)
         },
         deleteAudio: { _ in }
