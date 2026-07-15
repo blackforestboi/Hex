@@ -320,17 +320,18 @@ final class RecordingRaceTests: XCTestCase {
     let store = TestStore(initialState: Self.makeState()) {
       TranscriptionFeature()
     } withDependencies: {
-      $0.transcriptPersistence.save = { text, audioURL, duration, sourceAppBundleID, sourceAppName, status in
-        await probe.record(duration: duration)
+      $0.transcriptPersistence.save = { request in
+		await probe.record(duration: request.duration)
         return Transcript(
           id: transcript.id,
           timestamp: transcript.timestamp,
-          text: text,
-          audioPath: audioURL,
-          duration: duration,
-          sourceAppBundleID: sourceAppBundleID,
-          sourceAppName: sourceAppName,
-          status: status
+		  text: request.text,
+		  audioPath: request.audioURL,
+		  duration: request.duration,
+		  sourceAppBundleID: request.sourceAppBundleID,
+		  sourceAppName: request.sourceAppName,
+		  status: request.status,
+		  screenshotPath: request.screenshotData == nil ? nil : URL(fileURLWithPath: "/screenshot.png")
         )
       }
       $0.pasteboard.paste = { _ in }
@@ -674,9 +675,14 @@ final class RecordingRaceTests: XCTestCase {
 		XCTAssertEqual(await refinementProbe.paste, "refined draft")
 	}
 
-	func testRefinedHotkeyReleaseDuringSelectionCaptureDoesNotStartRecording() async {
+	func testDoubleTapRefinedHotkeyThirdTapCancelsPendingSelectionCapture() async {
 		let captureProbe = PendingSelectedTextCaptureProbe()
-		let store = TestStore(initialState: Self.makeState()) {
+		var state = Self.makeState()
+		state.$hexSettings.withLock {
+			$0.refinedDoubleTapLockEnabled = true
+			$0.refinedUseDoubleTapOnly = true
+		}
+		let store = TestStore(initialState: state) {
 			TranscriptionFeature()
 		} withDependencies: {
 			$0.pasteboard.captureSelectedText = { await captureProbe.capture() }
@@ -693,6 +699,175 @@ final class RecordingRaceTests: XCTestCase {
 		await store.receive(.selectedTextCaptureUnavailable) {
 			$0.isCapturingSelectedTextForRefinement = false
 			$0.refinedHotKeyReleasedWhileCapturingSelection = false
+		}
+		await store.finish()
+	}
+
+	func testScreenAwareIndicatorActivatesForRefinedRecording() async {
+		let activationID = UUID()
+		var state = Self.makeState()
+		state.isRecording = true
+		state.activeRecordingSource = .refined
+		state.screenAwareActivationID = activationID
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		}
+
+		await store.send(.screenAwareModeActivated(activationID)) {
+			$0.screenAwareActivationID = nil
+			$0.isScreenAwareModeActive = true
+		}
+		await store.finish()
+	}
+
+	func testScreenAwareIndicatorDoesNotActivateOutsideRefinedRecording() async {
+		let store = TestStore(initialState: Self.makeState()) {
+			TranscriptionFeature()
+		}
+
+		await store.send(.screenAwareModeActivated(UUID()))
+		await store.finish()
+	}
+
+	func testScreenAwareCountdownEligibilityRequiresHoldModelAndKey() {
+		var settings = HexSettings()
+		settings.screenAwareOpenRouterModelID = "vision-model"
+
+		XCTAssertTrue(ScreenAwareActivation.shouldStartCountdown(
+			isPressAndHold: true,
+			settings: settings,
+			hasOpenRouterKey: true
+		))
+		XCTAssertFalse(ScreenAwareActivation.shouldStartCountdown(
+			isPressAndHold: false,
+			settings: settings,
+			hasOpenRouterKey: true
+		))
+		XCTAssertFalse(ScreenAwareActivation.shouldStartCountdown(
+			isPressAndHold: true,
+			settings: settings,
+			hasOpenRouterKey: false
+		))
+
+		settings.screenAwareOpenRouterModelID = nil
+		XCTAssertFalse(ScreenAwareActivation.shouldStartCountdown(
+			isPressAndHold: true,
+			settings: settings,
+			hasOpenRouterKey: true
+		))
+	}
+
+	func testScreenAwareIndicatorActivatesAfterHoldThreshold() async {
+		let activationID = UUID(0)
+		let clock = TestClock()
+		var state = Self.makeState()
+		state.isRecording = true
+		state.activeRecordingSource = .refined
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		} withDependencies: {
+			$0.continuousClock = clock
+			$0.uuid = .constant(activationID)
+		}
+
+		await store.send(.startScreenAwareActivationCountdown(activationID)) {
+			$0.screenAwareActivationID = activationID
+		}
+		await clock.advance(by: .seconds(0.74))
+		XCTAssertFalse(store.state.isScreenAwareModeActive)
+		await clock.advance(by: .seconds(0.01))
+		await store.receive(.screenAwareModeActivated(activationID)) {
+			$0.screenAwareActivationID = nil
+			$0.isScreenAwareModeActive = true
+		}
+		await store.finish()
+	}
+
+	func testQuickSecondTapCancelsScreenAwareCountdownAndStartsRefinement() async {
+		let activationID = UUID(0)
+		let clock = TestClock()
+		var state = Self.makeState()
+		state.$hexSettings.withLock { $0.includeSelectedTextInRefinement = false }
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		} withDependencies: {
+			$0.continuousClock = clock
+			$0.uuid = .constant(activationID)
+			$0.recording.startRecording = {}
+			$0.sleepManagement.preventSleep = { _ in }
+		}
+		store.exhaustivity = .off(showSkippedAssertions: false)
+
+		await store.send(.startScreenAwareActivationCountdown(activationID)) {
+			$0.screenAwareActivationID = activationID
+		}
+		await store.send(.refinedLockEstablished(activationID, false)) {
+			$0.screenAwareActivationID = nil
+			$0.cancelledScreenAwareActivationID = activationID
+		}
+		await store.receive(.refinedHotKeyPressed)
+		await store.receive(.startRefinedRecording)
+		XCTAssertTrue(store.state.isRecording)
+		XCTAssertEqual(store.state.activeRecordingSource, .refined)
+		await clock.advance(by: .seconds(1))
+		XCTAssertFalse(store.state.isScreenAwareModeActive)
+		await store.finish()
+	}
+
+	func testScreenAwareActivationStartsRecordingWithoutSelectedTextCapture() async {
+		let activationID = UUID(0)
+		let context = Self.makeScreenContext()
+		var state = Self.makeState()
+		state.screenAwareActivationID = activationID
+		state.$hexSettings.withLock { $0.includeSelectedTextInRefinement = true }
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		} withDependencies: {
+			$0.uuid = .constant(UUID(1))
+			$0.recording.startRecording = {}
+			$0.sleepManagement.preventSleep = { _ in }
+			$0.screenCapture.captureDisplayUnderCursor = { _ in context }
+		}
+		store.exhaustivity = .off(showSkippedAssertions: false)
+
+		await store.send(.screenAwareModeActivated(activationID))
+		XCTAssertTrue(store.state.isRecording)
+		XCTAssertEqual(store.state.activeRecordingSource, .refined)
+		XCTAssertTrue(store.state.isScreenAwareModeActive)
+		XCTAssertFalse(store.state.isCapturingSelectedTextForRefinement)
+		await store.receive(\.screenContextCaptured)
+		await store.finish()
+	}
+
+	func testScreenAwareIndicatorIgnoresStaleActivation() async {
+		let currentActivationID = UUID()
+		var state = Self.makeState()
+		state.isRecording = true
+		state.activeRecordingSource = .refined
+		state.screenAwareActivationID = currentActivationID
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		}
+
+		await store.send(.screenAwareModeActivated(UUID()))
+		XCTAssertFalse(store.state.isScreenAwareModeActive)
+		XCTAssertEqual(store.state.screenAwareActivationID, currentActivationID)
+		await store.finish()
+	}
+
+	func testRefinedReleaseClearsScreenAwareIndicatorAndPendingActivation() async {
+		let activationID = UUID()
+		var state = Self.makeState()
+		state.isScreenAwareModeActive = true
+		state.screenAwareActivationID = activationID
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		}
+
+		await store.send(.hotKeyReleased(.refined)) {
+			$0.isScreenAwareModeActive = false
+			$0.screenAwareActivationID = nil
+			$0.cancelledScreenAwareActivationID = activationID
 		}
 		await store.finish()
 	}
@@ -803,15 +978,108 @@ final class RecordingRaceTests: XCTestCase {
 		XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
 	}
 
-  private static func makeState() -> TranscriptionFeature.State {
+	func testScreenAwareActivationCapturesBeforeFinish() async {
+		let now = Date(timeIntervalSince1970: 1_234)
+		let context = Self.makeScreenContext()
+		let captureProbe = PendingScreenCaptureProbe()
+		var state = Self.makeState()
+		state.isRecording = true
+		state.recordingStartTime = now
+		state.forcedRefinementMode = .refined
+		state.activeRecordingSource = .refined
+		let activationID = UUID()
+		state.screenAwareActivationID = activationID
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		} withDependencies: {
+			$0.date.now = now
+			$0.screenCapture.captureDisplayUnderCursor = { _ in
+				return try await captureProbe.capture()
+			}
+			$0.recording.stopRecording = { .ignored(.noActiveRecording) }
+			$0.sleepManagement.allowSleep = {}
+		}
+		store.exhaustivity = .off(showSkippedAssertions: false)
+
+		await store.send(.screenAwareModeActivated(activationID))
+		await captureProbe.waitUntilPending()
+		XCTAssertTrue(store.state.isRecording)
+		XCTAssertTrue(store.state.isScreenAwareModeActive)
+
+		await captureProbe.resume(returning: context)
+		await store.receive(\.screenContextCaptured)
+		XCTAssertTrue(store.state.isRecording)
+		XCTAssertTrue(store.state.isScreenAwareModeActive)
+		XCTAssertEqual(store.state.screenContextForRefinement, context)
+
+		await store.send(.finishScreenAwareRecording)
+		XCTAssertFalse(store.state.isScreenAwareModeActive)
+		await store.receive(.stopRecording)
+		await store.finish()
+	}
+
+	func testScreenCaptureFailureDoesNotStopRefinedRecording() async {
+		let now = Date(timeIntervalSince1970: 1_234)
+		var state = Self.makeState()
+		state.isRecording = true
+		state.recordingStartTime = now
+		state.forcedRefinementMode = .refined
+		state.activeRecordingSource = .refined
+		let activationID = UUID()
+		state.screenAwareActivationID = activationID
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		} withDependencies: {
+			$0.date.now = now
+			$0.screenCapture.captureDisplayUnderCursor = { _ in throw ScreenCaptureFlowTestError.failed }
+			$0.recording.stopRecording = { .ignored(.noActiveRecording) }
+			$0.sleepManagement.allowSleep = {}
+		}
+		store.exhaustivity = .off(showSkippedAssertions: false)
+
+		await store.send(.screenAwareModeActivated(activationID))
+		await store.receive(\.screenContextCaptureFailed)
+		XCTAssertFalse(store.state.isScreenAwareModeActive)
+		XCTAssertTrue(store.state.isRecording)
+		await store.finish()
+	}
+
+	func testTranscriptionErrorClearsScreenAwareIndicatorDuringCapture() async {
+		var state = Self.makeState()
+		state.isTranscribing = true
+		state.isScreenAwareModeActive = true
+		state.screenContextCaptureID = UUID()
+		let store = TestStore(initialState: state) {
+			TranscriptionFeature()
+		}
+		store.exhaustivity = .off(showSkippedAssertions: false)
+
+		await store.send(.transcriptionError(ScreenCaptureFlowTestError.failed, nil))
+		XCTAssertFalse(store.state.isScreenAwareModeActive)
+		XCTAssertNil(store.state.screenContextCaptureID)
+		await store.finish()
+	}
+
+	  private static func makeState() -> TranscriptionFeature.State {
     TranscriptionFeature.State(
       hexSettings: Shared(value: .init()),
       isRemappingScratchpadFocused: false,
       modelBootstrapState: Shared(value: .init(isModelReady: true)),
       transcriptionHistory: Shared(value: .init())
     )
-  }
-}
+	  }
+
+	private static func makeScreenContext() -> ScreenContext {
+		ScreenContext(
+			imagePNGData: Data([0x89, 0x50, 0x4E, 0x47]),
+			recognizedText: "Visible account balance",
+			pixelWidth: 1920,
+			pixelHeight: 1080,
+			cursorX: 640,
+			cursorY: 480
+		)
+	}
+	}
 
 private actor RefinementProbe {
 	private(set) var input: String?
@@ -846,6 +1114,31 @@ private actor PendingSelectedTextCaptureProbe {
 
 private enum RefinementTestError: Error {
 	case failed
+}
+
+private enum ScreenCaptureFlowTestError: Error {
+	case failed
+}
+
+private actor PendingScreenCaptureProbe {
+	private var continuation: CheckedContinuation<ScreenContext, Error>?
+
+	func capture() async throws -> ScreenContext {
+		try await withCheckedThrowingContinuation { continuation in
+			self.continuation = continuation
+		}
+	}
+
+	func waitUntilPending() async {
+		while continuation == nil {
+			await Task.yield()
+		}
+	}
+
+	func resume(returning context: ScreenContext) {
+		continuation?.resume(returning: context)
+		continuation = nil
+	}
 }
 
 private actor PendingRefinementProbe {

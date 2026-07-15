@@ -6,8 +6,10 @@ final class RefinementTests: XCTestCase {
 		let settings = try JSONDecoder().decode(HexSettings.self, from: Data("{}".utf8))
 		XCTAssertEqual(settings.refinementMode, .raw)
 		XCTAssertEqual(settings.refinementProvider, .apple)
-		XCTAssertEqual(settings.refinementInstructions, "")
-		XCTAssertNil(settings.openRouterModelID)
+			XCTAssertEqual(settings.refinementInstructions, "")
+			XCTAssertNil(settings.openRouterModelID)
+			XCTAssertNil(settings.screenAwareOpenRouterModelID)
+			XCTAssertEqual(settings.screenAwareInputSource, .localOCR)
 	}
 
 	func testPromptUsesTranscriptDelimitersAndCustomInstructions() {
@@ -40,6 +42,14 @@ final class RefinementTests: XCTestCase {
 		)
 	}
 
+	func testCleanerRemovesLeakedThinkingMarkup() {
+		XCTAssertEqual(
+			RefinementTextProcessor.clean("<think>drafting a response</think>\n\nHello there"),
+			"Hello there"
+		)
+		XCTAssertEqual(RefinementTextProcessor.clean("</think>\nHello there"), "Hello there")
+	}
+
 	func testCleanerPreservesQuotedRefinementOutputWithoutPromptTag() {
 		XCTAssertEqual(RefinementTextProcessor.clean("\"A quoted sentence.\""), "\"A quoted sentence.\"")
 	}
@@ -55,7 +65,11 @@ final class RefinementTests: XCTestCase {
 		{
 		  "id": "openai/gpt-4.1-mini",
 		  "name": "OpenAI: GPT-4.1 Mini",
-		  "pricing": { "prompt": "0.0000004", "completion": "0.0000016" },
+			  "pricing": { "prompt": "0.0000004", "completion": "0.0000016" },
+			  "architecture": {
+			    "input_modalities": ["text", "image"],
+			    "output_modalities": ["text"]
+			  },
 		  "context_length": 1047576
 		}
 		"""
@@ -64,7 +78,56 @@ final class RefinementTests: XCTestCase {
 
 		XCTAssertEqual(model.id, "openai/gpt-4.1-mini")
 		XCTAssertEqual(model.contextLength, 1_047_576)
-		XCTAssertEqual(model.pricing.inputPricePerMillionTokens, Decimal(string: "0.4"))
+			XCTAssertEqual(model.pricing.inputPricePerMillionTokens, Decimal(string: "0.4"))
+			XCTAssertTrue(model.supportsInput(.text))
+			XCTAssertTrue(model.supportsInput(.image))
+	}
+
+	func testOpenRouterModelInputModalityContractDistinguishesTextAndVisionModels() {
+		let legacyModel = OpenRouterModel(
+			id: "legacy/text-model",
+			name: "Legacy Text Model",
+			pricing: .init(prompt: "0", completion: "0")
+		)
+		let textModel = OpenRouterModel(
+			id: "provider/text-model",
+			name: "Text Model",
+			pricing: .init(prompt: "0", completion: "0"),
+			architecture: .init(inputModalities: ["text"])
+		)
+		let visionModel = OpenRouterModel(
+			id: "provider/vision-model",
+			name: "Vision Model",
+			pricing: .init(prompt: "0", completion: "0"),
+			architecture: .init(inputModalities: ["text", "image"])
+		)
+
+		XCTAssertTrue(legacyModel.supportsInput(.text))
+		XCTAssertFalse(legacyModel.supportsInput(.image))
+		XCTAssertTrue(textModel.supportsInput(.text))
+		XCTAssertFalse(textModel.supportsInput(.image))
+		XCTAssertTrue(visionModel.supportsInput(.text))
+		XCTAssertTrue(visionModel.supportsInput(.image))
+	}
+
+	func testOpenRouterModelDecodesReasoningCapabilities() throws {
+		let json = """
+		{
+		  "id": "provider/reasoning-model",
+		  "name": "Reasoning Model",
+		  "pricing": { "prompt": "0", "completion": "0" },
+		  "reasoning": {
+		    "supported_efforts": ["high", "low"],
+		    "default_enabled": true,
+		    "mandatory": true
+		  }
+		}
+		"""
+
+		let model = try JSONDecoder().decode(OpenRouterModel.self, from: Data(json.utf8))
+
+		XCTAssertEqual(model.reasoning?.supportedEfforts, ["high", "low"])
+		XCTAssertTrue(model.reasoning?.mandatory == true)
 	}
 
 	func testRefinementRequestRetainsSelectedOpenRouterModel() {
@@ -111,13 +174,149 @@ final class RefinementTests: XCTestCase {
 		)
 	}
 
-	func testSettingsKeepsCustomInstructionsWhenThereIsNoSpokenInstruction() {
+		func testSettingsKeepsCustomInstructionsWhenThereIsNoSpokenInstruction() {
 		let settings = HexSettings(refinementInstructions: "Keep the source details.")
 
 		XCTAssertEqual(
 			settings.refinementRequest(for: "Draft update", mode: .refined).instructions,
 			"Keep the source details."
 		)
+		}
+
+		func testSettingsBuildsScreenAwareOpenRouterRequest() {
+			let context = ScreenContext(
+				imagePNGData: Data([0x01, 0x02]),
+				recognizedText: "Account balance",
+				pixelWidth: 1920,
+				pixelHeight: 1080,
+				cursorX: 640,
+				cursorY: 480
+			)
+			let settings = HexSettings(
+				refinementProvider: .apple,
+				refinementInstructions: "Be concise.",
+				screenAwareOpenRouterModelID: "google/gemini-2.5-flash"
+			)
+
+			let request = settings.screenAwareRequest(for: "What is the balance?", context: context)
+
+			XCTAssertTrue(settings.isScreenAwareDictationConfigured)
+			XCTAssertEqual(request.provider, .openRouter)
+			XCTAssertEqual(request.modelID, "google/gemini-2.5-flash")
+			XCTAssertEqual(request.screenContext, context)
+			let prompt = ScreenAwarePromptBuilder.prompt(request: request, context: context)
+			XCTAssertTrue(prompt.sourceText.contains("What is the balance?"))
+			XCTAssertTrue(prompt.sourceText.contains("Account balance"))
+			XCTAssertTrue(prompt.sourceText.contains("1920 × 1080"))
+		}
+
+	func testScreenAwareRequestCanUseLocalOCRWithoutUploadingTheScreenshot() {
+		let context = ScreenContext(
+			imagePNGData: Data([0x01, 0x02]),
+			recognizedText: "Quarterly revenue: 24% growth",
+			pixelWidth: 1920,
+			pixelHeight: 1080,
+			cursorX: 640,
+			cursorY: 480
+		)
+		let settings = HexSettings(
+			screenAwareOpenRouterModelID: "qwen/qwen3.5-flash",
+			screenAwareInputSource: .localOCR
+		)
+
+		let request = settings.screenAwareRequest(for: "What is the growth?", context: context)
+		let prompt = ScreenAwarePromptBuilder.prompt(request: request, context: context)
+
+		XCTAssertEqual(request.screenAwareInputSource, .localOCR)
+		XCTAssertFalse(request.screenAwareInputSource.uploadsScreenshot)
+		XCTAssertTrue(prompt.systemInstruction.contains("No screenshot is attached."))
+		XCTAssertTrue(prompt.sourceText.contains("Quarterly revenue: 24% growth"))
+	}
+
+	func testLocalOCRScreenAwareRequestUsesTheSelectedRefinementModel() {
+		let context = ScreenContext(
+			imagePNGData: Data(),
+			recognizedText: "Hello",
+			pixelWidth: 1,
+			pixelHeight: 1,
+			cursorX: 0,
+			cursorY: 0
+		)
+		let settings = HexSettings(
+			refinementProvider: .openRouter,
+			openRouterModelID: "provider/fast-text-model",
+			screenAwareInputSource: .localOCR
+		)
+
+		let request = settings.screenAwareRequest(for: "Reply", context: context)
+
+		XCTAssertEqual(request.provider, .openRouter)
+		XCTAssertEqual(request.modelID, "provider/fast-text-model")
+	}
+
+	func testUploadedScreenAwareRequestUsesTheResolvedImageModel() {
+		let context = ScreenContext(
+			imagePNGData: Data(),
+			recognizedText: "Hello",
+			pixelWidth: 1,
+			pixelHeight: 1,
+			cursorX: 0,
+			cursorY: 0
+		)
+		let settings = HexSettings(
+			refinementProvider: .openRouter,
+			openRouterModelID: "provider/text-model",
+			screenAwareOpenRouterModelID: "provider/fallback-vision-model",
+			screenAwareInputSource: .image
+		)
+
+		let request = settings.screenAwareRequest(
+			for: "Reply",
+			context: context,
+			imageModelID: "provider/primary-vision-model"
+		)
+
+		XCTAssertEqual(request.provider, .openRouter)
+		XCTAssertEqual(request.modelID, "provider/primary-vision-model")
+	}
+
+	func testScreenAwarePromptUsesFallbackOCRAndPreservesMetadata() {
+		let context = ScreenContext(
+			imagePNGData: Data([0x01]),
+			recognizedText: "",
+			pixelWidth: 2560,
+			pixelHeight: 1440,
+			cursorX: 123.9,
+			cursorY: 456.1
+		)
+		let request = RefinementRequest(
+			text: "Summarize the visible error",
+			mode: .refined,
+			instructions: "  Return one sentence.  ",
+			provider: .openRouter,
+			modelID: "provider/vision-model",
+			screenContext: context
+		)
+
+		let prompt = ScreenAwarePromptBuilder.prompt(request: request, context: context)
+
+		XCTAssertTrue(prompt.systemInstruction.contains("Return one sentence."))
+		XCTAssertTrue(prompt.systemInstruction.contains("Perform any needed extraction internally"))
+		XCTAssertTrue(prompt.systemInstruction.contains("Do not echo a general image description or a full OCR transcript"))
+		XCTAssertTrue(prompt.systemInstruction.contains("Output only the direct answer"))
+		XCTAssertFalse(prompt.systemInstruction.contains("## Image description"))
+		XCTAssertTrue(prompt.systemInstruction.contains("spoken request to decide which visual details"))
+		XCTAssertTrue(prompt.sourceText.contains("<spoken_request>\nSummarize the visible error\n</spoken_request>"))
+		XCTAssertTrue(prompt.sourceText.contains("spoken request must inform the analysis itself"))
+		XCTAssertTrue(prompt.sourceText.contains("Pixel dimensions: 2560 × 1440"))
+		XCTAssertTrue(prompt.sourceText.contains("x=123, y=456"))
+		XCTAssertTrue(prompt.sourceText.contains("No text was recognized locally."))
+	}
+
+	func testScreenAwareConfigurationRejectsWhitespaceOnlyModelID() {
+		XCTAssertFalse(HexSettings(screenAwareOpenRouterModelID: nil).isScreenAwareDictationConfigured)
+		XCTAssertFalse(HexSettings(screenAwareOpenRouterModelID: "  \n").isScreenAwareDictationConfigured)
+		XCTAssertTrue(HexSettings(screenAwareOpenRouterModelID: "provider/vision-model").isScreenAwareDictationConfigured)
 	}
 
 	func testModifierOnlyHotkeyConflictIsDetected() {

@@ -5,6 +5,7 @@ import SwiftUI
 struct OpenRouterModelPickerView: View {
 	@Binding var selectedModelID: String?
 	let apiKey: String
+	let requiredInputModality: OpenRouterModel.InputModality
 	@Environment(\.dismiss) private var dismiss
 	@State private var models: [OpenRouterModel] = []
 	@State private var searchText = ""
@@ -13,6 +14,7 @@ struct OpenRouterModelPickerView: View {
 	@State private var errorMessage: String?
 
 	var body: some View {
+		let displayedModels = filteredModels
 		NavigationStack {
 			VStack(spacing: 0) {
 				header
@@ -26,10 +28,10 @@ struct OpenRouterModelPickerView: View {
 						systemImage: "cpu",
 						description: Text("Check your OpenRouter API key and refresh the catalog.")
 					)
-				} else if filteredModels.isEmpty {
+				} else if displayedModels.isEmpty {
 					ContentUnavailableView.search(text: searchText)
 				} else {
-					List(filteredModels) { model in
+					List(displayedModels) { model in
 						Button {
 							selectedModelID = model.id
 							dismiss()
@@ -74,7 +76,7 @@ struct OpenRouterModelPickerView: View {
 
 	private var header: some View {
 		HStack(spacing: 12) {
-			Text("OpenRouter Models")
+				Text(requiredInputModality == .image ? "OpenRouter Vision Models" : "OpenRouter Models")
 				.font(.headline)
 
 			Picker("Sort", selection: $sortOrder) {
@@ -103,7 +105,8 @@ struct OpenRouterModelPickerView: View {
 	}
 
 	private var filteredModels: [OpenRouterModel] {
-		let filtered = searchText.isEmpty ? models : models.filter {
+			let modalityModels = models.filter { $0.supportsInput(requiredInputModality) }
+			let filtered = searchText.isEmpty ? modalityModels : modalityModels.filter {
 			$0.name.localizedCaseInsensitiveContains(searchText) || $0.id.localizedCaseInsensitiveContains(searchText)
 		}
 		return filtered.sorted(by: { lhs, rhs in

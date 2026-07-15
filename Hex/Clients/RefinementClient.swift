@@ -1,3 +1,4 @@
+import AppKit
 import Dependencies
 import DependenciesMacros
 import Foundation
@@ -8,6 +9,17 @@ import FoundationModels
 #endif
 
 private let refinementLogger = HexLog.transcription
+
+/// LLM providers can take substantially longer than URLSession's default 60-second
+/// request timeout, especially for multimodal requests. This is deliberately a
+/// transport window rather than an application-level generation timeout: Hex leaves
+/// the request alive until it completes, fails, or the user explicitly cancels it.
+private let longRunningRefinementSession: URLSession = {
+	let configuration = URLSessionConfiguration.default
+	configuration.timeoutIntervalForRequest = 24 * 60 * 60
+	configuration.timeoutIntervalForResource = 24 * 60 * 60
+	return URLSession(configuration: configuration)
+}()
 
 @DependencyClient
 struct RefinementClient {
@@ -23,15 +35,16 @@ extension RefinementClient: DependencyKey {
 	}
 
 	private static func safeRefine(_ request: RefinementRequest) async throws -> String {
-		let timeout: Duration = request.provider == .apple ? .seconds(5) : .seconds(15)
-		let prompt = RefinementPromptBuilder.prompt(
-			mode: request.mode,
-			instructions: request.instructions,
-			text: request.text
-		)
-		let result = try await RefinementTimeout.run(after: timeout) {
-			try await process(request, prompt: prompt)
-		}
+			let prompt = if let screenContext = request.screenContext {
+				ScreenAwarePromptBuilder.prompt(request: request, context: screenContext)
+			} else {
+				RefinementPromptBuilder.prompt(
+					mode: request.mode,
+					instructions: request.instructions,
+					text: request.text
+				)
+			}
+		let result = try await process(request, prompt: prompt)
 		guard let validatedResult = validated(result) else {
 			throw RefinementError.invalidResponse
 		}
@@ -62,7 +75,13 @@ extension RefinementClient: DependencyKey {
 			guard let apiKey = OpenRouterAPIKeyStore.read(), !apiKey.isEmpty,
 				  let modelID = request.modelID, !modelID.isEmpty
 			else { throw RefinementError.missingConfiguration }
-			return try await openRouterProcess(prompt: prompt, apiKey: apiKey, modelID: modelID)
+				return try await openRouterProcess(
+					prompt: prompt,
+					apiKey: apiKey,
+					modelID: modelID,
+					screenContext: request.screenContext,
+					screenAwareInputSource: request.screenAwareInputSource
+				)
 		}
 	}
 
@@ -88,148 +107,111 @@ extension RefinementClient: DependencyKey {
 				text: prompt.sourceText
 			)
 		)
-		let (data, response) = try await URLSession.shared.data(for: request)
-		guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw RefinementError.requestFailed }
+		let (data, response) = try await longRunningRefinementSession.data(for: request)
+		guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
+			throw RefinementError.requestFailed(
+				statusCode: (response as? HTTPURLResponse)?.statusCode,
+				message: nil
+			)
+		}
 		guard let result = try JSONDecoder().decode(GeminiResponse.self, from: data).text else { throw RefinementError.invalidResponse }
 		return result
 	}
 
-	private static func openRouterProcess(prompt: RefinementPrompt, apiKey: String, modelID: String) async throws -> String {
+	private static func openRouterProcess(
+			prompt: RefinementPrompt,
+			apiKey: String,
+			modelID: String,
+			screenContext: ScreenContext?,
+			screenAwareInputSource: ScreenAwareInputSource
+	) async throws -> String {
+		let imageUpload: (data: Data, mimeType: String)? = screenContext.flatMap { context -> (data: Data, mimeType: String)? in
+			guard screenAwareInputSource.uploadsScreenshot else { return nil }
+			if let jpegData = ScreenAwareImageUpload.jpegData(from: context.imagePNGData),
+			   jpegData.count < context.imagePNGData.count {
+				return (data: jpegData, mimeType: "image/jpeg")
+			}
+			return (data: context.imagePNGData, mimeType: "image/png")
+		}
+		if let screenContext {
+			refinementLogger.notice(
+				"Submitting screen-aware OpenRouter request model=\(modelID, privacy: .public) source=\(screenAwareInputSource.rawValue, privacy: .public) storedImageBytes=\(screenContext.imagePNGData.count) uploadImageBytes=\(imageUpload?.data.count ?? 0)"
+			)
+		}
 		var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
 		request.httpMethod = "POST"
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 		request.httpBody = try JSONEncoder().encode(
-			OpenRouterRequest(
-				model: modelID,
-				instruction: prompt.systemInstruction,
-				text: prompt.sourceText
-			)
+				OpenRouterRequest(
+					model: modelID,
+					instruction: prompt.systemInstruction,
+					text: prompt.sourceText,
+					imageData: imageUpload?.data,
+					imageMIMEType: imageUpload?.mimeType,
+					reasoning: OpenRouterModelCatalog.reasoningConfiguration(for: modelID)
+				)
 		)
-		let (data, response) = try await URLSession.shared.data(for: request)
-		guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw RefinementError.requestFailed }
-		guard let result = try JSONDecoder().decode(OpenRouterResponse.self, from: data).text else { throw RefinementError.invalidResponse }
-		return result
+		do {
+			let (data, response) = try await longRunningRefinementSession.data(for: request)
+			guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
+				let statusCode = (response as? HTTPURLResponse)?.statusCode
+				let providerMessage = OpenRouterErrorResponse.message(from: data)
+				let messageForLog = providerMessage ?? "none"
+				refinementLogger.error(
+					"OpenRouter request failed status=\(statusCode ?? -1) message=\(messageForLog, privacy: .private)"
+				)
+				throw RefinementError.requestFailed(statusCode: statusCode, message: providerMessage)
+			}
+			guard let result = try JSONDecoder().decode(OpenRouterResponse.self, from: data).text else { throw RefinementError.invalidResponse }
+			if screenContext != nil {
+				refinementLogger.notice(
+					"Received screen-aware OpenRouter response model=\(modelID, privacy: .public) outputCharacters=\(result.count)"
+				)
+			}
+			return result
+		} catch let error as RefinementError {
+			throw error
+		} catch {
+			refinementLogger.error("OpenRouter transport request failed: \(error.localizedDescription, privacy: .private)")
+			throw RefinementError.transportFailed(error.localizedDescription)
+		}
+	}
+
+	/// Keeps the stored PNG for History while sending a smaller, same-dimension
+	/// JPEG to the provider. If conversion fails, the original PNG remains valid input.
+	private enum ScreenAwareImageUpload {
+		static func jpegData(from pngData: Data) -> Data? {
+			guard let image = NSImage(data: pngData),
+				  let tiffData = image.tiffRepresentation,
+				  let bitmap = NSBitmapImageRep(data: tiffData)
+			else { return nil }
+			return bitmap.representation(
+				using: .jpeg,
+				properties: [.compressionFactor: 0.92]
+			)
+		}
 	}
 
 	private enum RefinementError: LocalizedError {
-		case timeout, requestFailed, invalidResponse, missingConfiguration, providerUnavailable
+		case requestFailed(statusCode: Int?, message: String?)
+		case transportFailed(String)
+		case invalidResponse, missingConfiguration, providerUnavailable
 		var errorDescription: String? {
 			switch self {
-			case .timeout: "Refinement timed out"
-			case .requestFailed: "Refinement request failed"
-			case .invalidResponse: "Refinement returned an invalid response"
-			case .missingConfiguration: "Refinement provider is not configured"
-			case .providerUnavailable: "Refinement provider is unavailable on this Mac"
+			case let .requestFailed(statusCode, message):
+				let status = statusCode.map { " (HTTP \($0))" } ?? ""
+				return "Refinement request failed\(status)\(message.map { ": \($0)" } ?? "")"
+			case let .transportFailed(message):
+				return "Refinement request failed: \(message)"
+			case .invalidResponse:
+				return "Refinement returned an invalid response"
+			case .missingConfiguration:
+				return "Refinement provider is not configured"
+			case .providerUnavailable:
+				return "Refinement provider is unavailable on this Mac"
 			}
 		}
-	}
-}
-
-/// Runs an operation with a responsive timeout even if its implementation does not cooperate
-/// with task cancellation. The losing operation is cancelled but never delays the caller.
-enum RefinementTimeout {
-	static func run<Value: Sendable>(
-		after timeout: Duration,
-		operation: @escaping @Sendable () async throws -> Value
-	) async throws -> Value {
-		let box = ContinuationBox<Value>()
-		return try await withTaskCancellationHandler(operation: {
-			try await withCheckedThrowingContinuation { continuation in
-				box.install(continuation)
-				let operationTask = Task.detached {
-					do {
-						box.resolve(.success(try await operation()))
-					} catch {
-						box.resolve(.failure(error))
-					}
-				}
-				box.setOperationTask(operationTask)
-				let timeoutTask = Task.detached {
-					do {
-						try await Task.sleep(for: timeout)
-						box.cancel(with: RefinementTimeoutError.timedOut)
-					} catch is CancellationError {
-						return
-					} catch {
-						box.cancel(with: error)
-					}
-				}
-				box.setTimeoutTask(timeoutTask)
-			}
-		}, onCancel: {
-			box.cancel(with: CancellationError())
-		})
-	}
-
-	private final class ContinuationBox<Value: Sendable>: @unchecked Sendable {
-		private let lock = NSLock()
-		private var continuation: CheckedContinuation<Value, Error>?
-		private var operationTask: Task<Void, Never>?
-		private var timeoutTask: Task<Void, Never>?
-		private var isResolved = false
-		private var pendingResult: Result<Value, Error>?
-
-		func install(_ continuation: CheckedContinuation<Value, Error>) {
-			lock.lock()
-			let pendingResult = self.pendingResult
-			if pendingResult == nil {
-				self.continuation = continuation
-			}
-			lock.unlock()
-			if let pendingResult {
-				continuation.resume(with: pendingResult)
-			}
-		}
-
-		func setOperationTask(_ task: Task<Void, Never>) {
-			lock.lock()
-			operationTask = task
-			let shouldCancel = isResolved
-			lock.unlock()
-			if shouldCancel { task.cancel() }
-		}
-
-		func setTimeoutTask(_ task: Task<Void, Never>) {
-			lock.lock()
-			timeoutTask = task
-			let shouldCancel = isResolved
-			lock.unlock()
-			if shouldCancel { task.cancel() }
-		}
-
-		func resolve(_ result: Result<Value, Error>) {
-			finish(result, cancelOperation: false)
-		}
-
-		func cancel(with error: Error) {
-			finish(.failure(error), cancelOperation: true)
-		}
-
-		private func finish(_ result: Result<Value, Error>, cancelOperation: Bool) {
-			lock.lock()
-			guard !isResolved else {
-				lock.unlock()
-				return
-			}
-			isResolved = true
-			let continuation = self.continuation
-			self.continuation = nil
-			if continuation == nil {
-				pendingResult = result
-			}
-			let task = operationTask
-			let timeoutTask = self.timeoutTask
-			lock.unlock()
-			if cancelOperation { task?.cancel() }
-			timeoutTask?.cancel()
-			continuation?.resume(with: result)
-		}
-	}
-
-	private enum RefinementTimeoutError: LocalizedError {
-		case timedOut
-		var errorDescription: String? { "Refinement timed out" }
 	}
 }
 
@@ -254,25 +236,89 @@ private struct GeminiRequest: Encodable {
 private struct OpenRouterRequest: Encodable {
 	let model: String
 	let messages: [Message]
+	let reasoning: OpenRouterReasoningConfiguration?
 	let temperature = 0.2
 	let maxTokens = RefinementOutput.maximumTokens
 
-	init(model: String, instruction: String, text: String) {
+	init(
+		model: String,
+		instruction: String,
+		text: String,
+		imageData: Data? = nil,
+		imageMIMEType: String? = nil,
+		reasoning: OpenRouterReasoningConfiguration? = nil
+	) {
 		self.model = model
+		self.reasoning = reasoning
+		let userContent: Message.Content = if let imageData, let imageMIMEType {
+			.parts([
+				.text(text),
+				.imageURL("data:\(imageMIMEType);base64,\(imageData.base64EncodedString())"),
+			])
+		} else {
+			.text(text)
+		}
 		messages = [
-			.init(role: "system", content: instruction),
-			.init(role: "user", content: text),
+			.init(role: "system", content: .text(instruction)),
+			.init(role: "user", content: userContent),
 		]
 	}
 
 	struct Message: Encodable {
 		let role: String
-		let content: String
+		let content: Content
+
+		enum Content: Encodable {
+			case text(String)
+			case parts([Part])
+
+			func encode(to encoder: Encoder) throws {
+				var container = encoder.singleValueContainer()
+				switch self {
+				case let .text(text):
+					try container.encode(text)
+				case let .parts(parts):
+					try container.encode(parts)
+				}
+			}
+		}
+
+		struct Part: Encodable {
+			let type: String
+			let text: String?
+			let imageURL: ImageURL?
+
+			static func text(_ text: String) -> Self {
+				.init(type: "text", text: text, imageURL: nil)
+			}
+
+			static func imageURL(_ url: String) -> Self {
+				.init(type: "image_url", text: nil, imageURL: .init(url: url))
+			}
+
+			enum CodingKeys: String, CodingKey {
+				case type, text
+				case imageURL = "image_url"
+			}
+		}
+
+		struct ImageURL: Encodable {
+			let url: String
+		}
 	}
 
 	enum CodingKeys: String, CodingKey {
-		case model, messages, temperature
+		case model, messages, reasoning, temperature
 		case maxTokens = "max_tokens"
+	}
+
+	func encode(to encoder: Encoder) throws {
+		var container = encoder.container(keyedBy: CodingKeys.self)
+		try container.encode(model, forKey: .model)
+		try container.encode(messages, forKey: .messages)
+		try container.encode(temperature, forKey: .temperature)
+		try container.encode(maxTokens, forKey: .maxTokens)
+		try container.encodeIfPresent(reasoning, forKey: .reasoning)
 	}
 }
 
@@ -291,6 +337,19 @@ private struct OpenRouterResponse: Decodable {
 
 	struct Message: Decodable {
 		let content: String?
+	}
+}
+
+private struct OpenRouterErrorResponse: Decodable {
+	let error: ErrorDetail?
+
+	struct ErrorDetail: Decodable {
+		let message: String?
+	}
+
+	static func message(from data: Data) -> String? {
+		guard let message = try? JSONDecoder().decode(Self.self, from: data).error?.message else { return nil }
+		return String(message.prefix(1_000))
 	}
 }
 

@@ -97,6 +97,7 @@ class KeyEventMonitorClientLive {
   private var continuations: [UUID: @Sendable (KeyEvent) -> Bool] = [:]
   private var inputContinuations: [UUID: @Sendable (InputEvent) -> Bool] = [:]
   private let queue = DispatchQueue(label: "com.kitlangton.Hex.KeyEventMonitor", attributes: .concurrent)
+  private let queueSpecificKey = DispatchSpecificKey<Void>()
   private var isMonitoring = false
   private var wantsMonitoring = false
   private var accessibilityTrusted = false
@@ -114,6 +115,7 @@ class KeyEventMonitorClientLive {
 
   init() {
     logger.info("Initializing HotKeyClient with CGEvent tap.")
+    queue.setSpecific(key: queueSpecificKey, value: ())
     registerSystemEventObservers()
   }
 
@@ -577,6 +579,9 @@ extension KeyEventMonitorClientLive {
     }
     // A stale TCC cache can report denied while key events demonstrably flow (#250);
     // trust the events over the check so the watchdog and settings UI stay honest.
+    if DispatchQueue.getSpecific(key: queueSpecificKey) != nil {
+      return inputMonitoringProvenByEvents
+    }
     return queue.sync { inputMonitoringProvenByEvents }
   }
 

@@ -10,6 +10,7 @@ struct RefinementSectionView: View {
 	@State private var geminiAPIKey = ""
 	@State private var openRouterAPIKey = ""
 	@State private var isShowingOpenRouterModelPicker = false
+	@State private var isShowingScreenAwareModelPicker = false
 
 	var body: some View {
 		Section {
@@ -61,7 +62,7 @@ struct RefinementSectionView: View {
 						.foregroundStyle(.secondary)
 				}
 
-				if store.hexSettings.refinementProvider == .openRouter {
+					if store.hexSettings.refinementProvider == .openRouter {
 					SecureField("OpenRouter API Key", text: $openRouterAPIKey)
 						.onSubmit(persistOpenRouterAPIKey)
 					Button {
@@ -77,10 +78,58 @@ struct RefinementSectionView: View {
 					Text("Your key is stored securely in Keychain. Choose any text model from the cached OpenRouter catalog.")
 						.font(.caption)
 						.foregroundStyle(.secondary)
-					Text("OpenRouter sends the completed, locally transformed transcript text to the selected model. Audio is never sent.")
-						.font(.caption)
-						.foregroundStyle(.secondary)
-				}
+						Text("OpenRouter sends the completed, locally transformed transcript text to the selected model. Audio is never sent.")
+							.font(.caption)
+							.foregroundStyle(.secondary)
+					}
+
+					VStack(alignment: .leading, spacing: 8) {
+						HStack {
+							Label("Screen-aware Dictation", systemImage: "rectangle.and.text.magnifyingglass")
+								.font(.headline)
+							Spacer()
+							Toggle("Enable Screen-aware Dictation", isOn: $store.hexSettings.screenAwareDictationEnabled)
+								.labelsHidden()
+								.disabled(openRouterAPIKey.isEmpty)
+						}
+						Text("Long-press the refinement hotkey to capture the display under the cursor as Screen-aware mode activates. With double-tap lock enabled, release the second tap for regular refinement or keep holding it for Screen-aware mode. The original screenshot and its local text are retained in History either way.")
+							.font(.caption)
+							.foregroundStyle(.secondary)
+						Picker("Analysis source", selection: $store.hexSettings.screenAwareInputSource) {
+							Text("Local Apple Vision OCR").tag(ScreenAwareInputSource.localOCR)
+							Text("Upload screenshot").tag(ScreenAwareInputSource.image)
+						}
+						.pickerStyle(.radioGroup)
+						.disabled(openRouterAPIKey.isEmpty || !store.hexSettings.screenAwareDictationEnabled)
+						Text(screenAwareSourceDescription)
+							.font(.caption)
+							.foregroundStyle(.secondary)
+						if store.hexSettings.refinementProvider != .openRouter {
+							SecureField("OpenRouter API Key", text: $openRouterAPIKey)
+								.onSubmit(persistOpenRouterAPIKey)
+						}
+						if store.hexSettings.screenAwareInputSource.uploadsScreenshot {
+							Button {
+								persistOpenRouterAPIKey()
+								isShowingScreenAwareModelPicker = true
+							} label: {
+								LabeledContent("Fallback Image Model") {
+									Text(store.hexSettings.screenAwareOpenRouterModelID ?? "Select a model")
+										.foregroundStyle(store.hexSettings.screenAwareOpenRouterModelID == nil ? .secondary : .primary)
+								}
+							}
+							.disabled(openRouterAPIKey.isEmpty || !store.hexSettings.screenAwareDictationEnabled)
+							Text("Used only when the selected refinement model cannot accept image input.")
+								.font(.caption)
+								.foregroundStyle(.secondary)
+						}
+						if openRouterAPIKey.isEmpty {
+							Text("Add an OpenRouter API key to choose an image model and enable this feature.")
+								.font(.caption)
+								.foregroundStyle(.secondary)
+						}
+					}
+					.frame(maxWidth: .infinity, alignment: .leading)
 			VStack(alignment: .leading, spacing: 14) {
 				RefinedHotKeyIntroduction(
 					hasConflict: store.hexSettings.refinedHotkey?.conflicts(with: store.hexSettings.hotkey) ?? false
@@ -149,12 +198,20 @@ struct RefinementSectionView: View {
 			persistGeminiAPIKey()
 			persistOpenRouterAPIKey()
 		}
-		.sheet(isPresented: $isShowingOpenRouterModelPicker) {
-			OpenRouterModelPickerView(
-				selectedModelID: $store.hexSettings.openRouterModelID,
-				apiKey: openRouterAPIKey
-			)
-		}
+			.sheet(isPresented: $isShowingOpenRouterModelPicker) {
+				OpenRouterModelPickerView(
+					selectedModelID: $store.hexSettings.openRouterModelID,
+					apiKey: openRouterAPIKey,
+					requiredInputModality: .text
+				)
+			}
+			.sheet(isPresented: $isShowingScreenAwareModelPicker) {
+				OpenRouterModelPickerView(
+					selectedModelID: $store.hexSettings.screenAwareOpenRouterModelID,
+					apiKey: openRouterAPIKey,
+					requiredInputModality: .image
+				)
+			}
 		.enableInjection()
 	}
 
@@ -164,6 +221,15 @@ struct RefinementSectionView: View {
 
 	private func persistOpenRouterAPIKey() {
 		persistAPIKey(openRouterAPIKey, providerName: "OpenRouter", save: OpenRouterAPIKeyStore.save, delete: OpenRouterAPIKeyStore.delete)
+	}
+
+	private var screenAwareSourceDescription: String {
+		switch store.hexSettings.screenAwareInputSource {
+		case .localOCR:
+			"Fastest and most private: Apple Vision extracts text on your Mac, then Hex uses your selected refinement model with that text and your spoken request. Best for documents, email, and other text-based screens."
+		case .image:
+			"Best for layout, charts, icons, imagery, or other visual details: Hex sends a compressed analysis copy of the screenshot to OpenRouter. The PNG captured by Hex stays local in History."
+		}
 	}
 
 	private func persistAPIKey(

@@ -56,6 +56,13 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	/// User-authored instructions appended to Hex's refinement contract.
 	public var refinementInstructions: String
 	public var openRouterModelID: String?
+	/// Vision-capable OpenRouter model used only when the selected refinement model
+	/// cannot accept an uploaded screenshot.
+	public var screenAwareOpenRouterModelID: String?
+	/// Keeps the selected Screen Aware model while allowing the feature to be disabled.
+	public var screenAwareDictationEnabled: Bool
+	/// Chooses whether Screen Aware sends a screenshot to OpenRouter or uses local OCR only.
+	public var screenAwareInputSource: ScreenAwareInputSource
 	/// Optional second recording shortcut that always runs the refinement stage.
 	public var refinedHotkey: HotKey?
 	public var refinedDoubleTapLockEnabled: Bool
@@ -63,6 +70,15 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var refinedMinimumKeyTime: Double
 	/// Whether the refined-transcription hotkey captures selected text as the source material.
 	public var includeSelectedTextInRefinement: Bool
+
+	public var isScreenAwareDictationConfigured: Bool {
+		screenAwareDictationEnabled
+	}
+
+	public var hasScreenAwareImageFallbackModel: Bool {
+		guard let screenAwareOpenRouterModelID else { return false }
+		return !screenAwareOpenRouterModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+	}
 
 	public func refinementRequest(
 		for text: String,
@@ -83,8 +99,27 @@ public struct HexSettings: Codable, Equatable, Sendable {
 			instructions: instructions,
 			provider: refinementProvider,
 			modelID: openRouterModelID
-		)
-	}
+			)
+		}
+
+		public func screenAwareRequest(
+			for spokenRequest: String,
+			context: ScreenContext,
+			inputSource: ScreenAwareInputSource? = nil,
+			imageModelID: String? = nil
+		) -> RefinementRequest {
+			let inputSource = inputSource ?? screenAwareInputSource
+			let usesUploadedImage = inputSource.uploadsScreenshot
+			return RefinementRequest(
+				text: spokenRequest,
+				mode: .refined,
+				instructions: refinementInstructions.trimmingCharacters(in: .whitespacesAndNewlines),
+				provider: usesUploadedImage ? .openRouter : refinementProvider,
+				modelID: usesUploadedImage ? (imageModelID ?? screenAwareOpenRouterModelID) : openRouterModelID,
+				screenContext: context,
+				screenAwareInputSource: inputSource
+			)
+		}
 
 	private mutating func normalizeDoubleTapSettings() {
 		if !doubleTapLockEnabled {
@@ -125,9 +160,12 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		removePunctuation: Bool = false,
 		refinementMode: RefinementMode = .raw,
 		refinementProvider: RefinementProvider = .apple,
-		refinementInstructions: String = "",
-		openRouterModelID: String? = nil,
-		refinedHotkey: HotKey? = nil,
+			refinementInstructions: String = "",
+			openRouterModelID: String? = nil,
+			screenAwareOpenRouterModelID: String? = nil,
+			screenAwareDictationEnabled: Bool = true,
+			screenAwareInputSource: ScreenAwareInputSource = .localOCR,
+			refinedHotkey: HotKey? = nil,
 		refinedDoubleTapLockEnabled: Bool = true,
 		refinedUseDoubleTapOnly: Bool = false,
 		refinedMinimumKeyTime: Double = HexCoreConstants.defaultMinimumKeyTime,
@@ -162,8 +200,11 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.removePunctuation = removePunctuation
 		self.refinementMode = refinementMode
 		self.refinementProvider = refinementProvider
-		self.refinementInstructions = refinementInstructions
-		self.openRouterModelID = openRouterModelID
+			self.refinementInstructions = refinementInstructions
+			self.openRouterModelID = openRouterModelID
+			self.screenAwareOpenRouterModelID = screenAwareOpenRouterModelID
+			self.screenAwareDictationEnabled = screenAwareDictationEnabled
+			self.screenAwareInputSource = screenAwareInputSource
 		self.refinedHotkey = refinedHotkey
 		self.refinedDoubleTapLockEnabled = refinedDoubleTapLockEnabled
 		self.refinedUseDoubleTapOnly = refinedUseDoubleTapOnly
@@ -222,9 +263,12 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case removePunctuation
 	case refinementMode
 	case refinementProvider
-	case refinementInstructions
-	case openRouterModelID
-	case refinedHotkey
+		case refinementInstructions
+		case openRouterModelID
+		case screenAwareOpenRouterModelID
+		case screenAwareDictationEnabled
+		case screenAwareInputSource
+		case refinedHotkey
 	case refinedDoubleTapLockEnabled
 	case refinedUseDoubleTapOnly
 	case refinedMinimumKeyTime
@@ -368,12 +412,20 @@ private enum HexSettingsSchema {
 		SettingsField(.refinementMode, keyPath: \.refinementMode, default: defaults.refinementMode).eraseToAny(),
 		SettingsField(.refinementProvider, keyPath: \.refinementProvider, default: defaults.refinementProvider).eraseToAny(),
 		SettingsField(.refinementInstructions, keyPath: \.refinementInstructions, default: defaults.refinementInstructions).eraseToAny(),
+			SettingsField(
+				.openRouterModelID,
+				keyPath: \.openRouterModelID,
+				default: defaults.openRouterModelID,
+				encode: { container, key, value in try container.encodeIfPresent(value, forKey: key) }
+			).eraseToAny(),
 		SettingsField(
-			.openRouterModelID,
-			keyPath: \.openRouterModelID,
-			default: defaults.openRouterModelID,
+			.screenAwareOpenRouterModelID,
+			keyPath: \.screenAwareOpenRouterModelID,
+			default: defaults.screenAwareOpenRouterModelID,
 			encode: { container, key, value in try container.encodeIfPresent(value, forKey: key) }
 		).eraseToAny(),
+		SettingsField(.screenAwareDictationEnabled, keyPath: \.screenAwareDictationEnabled, default: defaults.screenAwareDictationEnabled).eraseToAny(),
+		SettingsField(.screenAwareInputSource, keyPath: \.screenAwareInputSource, default: defaults.screenAwareInputSource).eraseToAny(),
 		SettingsField(
 			.refinedHotkey,
 			keyPath: \.refinedHotkey,

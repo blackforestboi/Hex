@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import AppKit
 import HexCore
 import Inject
 import SwiftUI
@@ -6,6 +7,7 @@ import SwiftUI
 struct SettingsView: View {
 	@ObserveInjection var inject
 	@Bindable var store: StoreOf<SettingsFeature>
+	@State private var localEventMonitor: Any?
 	let microphonePermission: PermissionStatus
 	let accessibilityPermission: PermissionStatus
 	let inputMonitoringPermission: PermissionStatus
@@ -44,7 +46,35 @@ struct SettingsView: View {
 		.task {
 			await store.send(.task).finish()
 		}
+		.onAppear(perform: installHotKeyCaptureCancellationMonitor)
+		.onDisappear(perform: removeHotKeyCaptureCancellationMonitor)
+		.onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
+			store.send(.cancelHotKeyCapture)
+		}
 		.enableInjection()
+	}
+
+	private func installHotKeyCaptureCancellationMonitor() {
+		guard localEventMonitor == nil else { return }
+
+		localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+			guard isCapturingHotKey else { return event }
+			store.send(.cancelHotKeyCapture)
+			return event
+		}
+	}
+
+	private func removeHotKeyCaptureCancellationMonitor() {
+		if let localEventMonitor {
+			NSEvent.removeMonitor(localEventMonitor)
+			self.localEventMonitor = nil
+		}
+	}
+
+	private var isCapturingHotKey: Bool {
+		store.isSettingHotKey
+			|| store.isSettingPasteLastTranscriptHotkey
+			|| store.isSettingRefinedHotKey
 	}
 }
 
