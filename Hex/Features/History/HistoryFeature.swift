@@ -283,7 +283,16 @@ struct HistoryFeature {
 						cursorX: 0,
 						cursorY: 0
 					)
-					request = settings.screenAwareRequest(for: rawText, context: context)
+					let inputSource = transcript.screenAwareInputSource ?? .image
+					let imageModelID = inputSource.uploadsScreenshot
+						? OpenRouterModelCatalog.selectedImageCapableModelID(for: settings)
+						: nil
+					request = settings.screenAwareRequest(
+						for: rawText,
+						context: context,
+						inputSource: inputSource,
+						imageModelID: imageModelID
+					)
 				} else {
 					let selectedText = transcript.selectedText
 					request = settings.refinementRequest(
@@ -632,6 +641,11 @@ private struct RunHistoryItemView: View {
 
 			if let screenshotPath = transcript.screenshotPath {
 				section("Screen context", systemImage: "display") {
+					if let source = transcript.screenAwareInputSource {
+						Label(source.historyLabel, systemImage: source.historySystemImage)
+							.font(.caption)
+							.foregroundStyle(.secondary)
+					}
 					if let screenshotByteCount {
 						Label("\(formatMegabytes(screenshotByteCount))", systemImage: "internaldrive")
 							.font(.caption)
@@ -735,6 +749,22 @@ private extension TranscriptStatus {
 		case .processing: "ellipsis.circle"
 		case .cancelled: "xmark.circle"
 		case .failed: "exclamationmark.triangle.fill"
+		}
+	}
+}
+
+private extension ScreenAwareInputSource {
+	var historyLabel: String {
+		switch self {
+		case .localOCR: "Local Apple Vision OCR"
+		case .image: "Screenshot uploaded for analysis"
+		}
+	}
+
+	var historySystemImage: String {
+		switch self {
+		case .localOCR: "text.viewfinder"
+		case .image: "photo.badge.arrow.up"
 		}
 	}
 }

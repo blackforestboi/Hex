@@ -16,6 +16,7 @@ struct TranscriptionIndicatorView: View {
     case hidden
     case optionKeyPressed
     case recording
+	case screenAware
     case transcribing
 	case refining
     case prewarming
@@ -31,6 +32,7 @@ struct TranscriptionIndicatorView: View {
     case .optionKeyPressed: return Color.black
     case .recording:
       return mixedColor(mixedNSColor(.red, with: .black, by: 0.5), with: .red, by: meter.averagePower * 3)
+	case .screenAware: return mixedColor(.systemTeal, with: .black, by: 0.45)
     case .transcribing: return mixedColor(.blue, with: .black, by: 0.5)
 	case .refining: return mixedColor(.purple, with: .black, by: 0.5)
     case .prewarming: return mixedColor(.blue, with: .black, by: 0.5)
@@ -42,6 +44,7 @@ struct TranscriptionIndicatorView: View {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.black
     case .recording: return mixedColor(.red, with: .white, by: 0.1).opacity(0.6)
+	case .screenAware: return mixedColor(.systemTeal, with: .white, by: 0.2).opacity(0.8)
     case .transcribing: return mixedColor(.blue, with: .white, by: 0.1).opacity(0.6)
 	case .refining: return mixedColor(.purple, with: .white, by: 0.1).opacity(0.6)
     case .prewarming: return mixedColor(.blue, with: .white, by: 0.1).opacity(0.6)
@@ -62,6 +65,7 @@ struct TranscriptionIndicatorView: View {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.clear
     case .recording: return Color.red
+	case .screenAware: return Color(nsColor: .systemTeal)
     case .transcribing: return transcribeBaseColor
 	case .refining: return .purple
     case .prewarming: return transcribeBaseColor
@@ -71,6 +75,27 @@ struct TranscriptionIndicatorView: View {
   private let cornerRadius: CGFloat = 8
   private let baseWidth: CGFloat = 16
   private let expandedWidth: CGFloat = 56
+	private let screenAwareWidth: CGFloat = 104
+
+	private var indicatorWidth: CGFloat {
+		switch status {
+		case .screenAware: screenAwareWidth
+		case .recording: expandedWidth
+		default: baseWidth
+		}
+	}
+
+	private var accessibilityLabel: String {
+		switch status {
+		case .hidden: "Dictation inactive"
+		case .optionKeyPressed: "Dictation hotkey pressed"
+		case .recording: "Recording"
+		case .screenAware: "Screen aware mode active"
+		case .transcribing: "Transcribing"
+		case .refining: "Refining"
+		case .prewarming: "Model prewarming"
+		}
+	}
 
   var isHidden: Bool {
     status == .hidden
@@ -114,6 +139,14 @@ struct TranscriptionIndicatorView: View {
               .blendMode(.screen)
           }.padding(6)
         }
+		.overlay {
+		  if status == .screenAware {
+			Label("Screen aware", systemImage: "rectangle.and.text.magnifyingglass")
+			  .font(.system(size: 9, weight: .semibold))
+			  .foregroundStyle(.white)
+			  .lineLimit(1)
+		  }
+		}
         .cornerRadius(cornerRadius)
         .shadow(
           color: status == .recording ? .red.opacity(averagePower) : .red.opacity(0),
@@ -125,16 +158,24 @@ struct TranscriptionIndicatorView: View {
         )
         .animation(.interactiveSpring(), value: meter)
         .frame(
-          width: status == .recording ? expandedWidth : baseWidth,
+		  width: indicatorWidth,
           height: baseWidth
         )
         .opacity(status == .hidden ? 0 : 1)
         .scaleEffect(status == .hidden ? 0.0 : 1)
         .blur(radius: status == .hidden ? 4 : 0)
         .animation(.bouncy(duration: 0.3), value: status)
-        .changeEffect(.glow(color: .red.opacity(0.5), radius: 8), value: status)
+		.changeEffect(
+		  .glow(
+			color: (status == .screenAware ? innerShadowColor : .red).opacity(0.5),
+			radius: 8
+		  ),
+		  value: status
+		)
         .changeEffect(.shine(angle: .degrees(0), duration: 0.6), value: transcribeEffect)
-        .compositingGroup()
+		.compositingGroup()
+		.accessibilityLabel(accessibilityLabel)
+		.accessibilityHidden(status == .hidden)
 		.task(id: status == .transcribing || status == .refining) {
 		  while (status == .transcribing || status == .refining), !Task.isCancelled {
             transcribeEffect += 1
@@ -169,6 +210,7 @@ struct TranscriptionIndicatorView: View {
     TranscriptionIndicatorView(status: .hidden, meter: .init(averagePower: 0, peakPower: 0))
     TranscriptionIndicatorView(status: .optionKeyPressed, meter: .init(averagePower: 0, peakPower: 0))
     TranscriptionIndicatorView(status: .recording, meter: .init(averagePower: 0.5, peakPower: 0.5))
+	TranscriptionIndicatorView(status: .screenAware, meter: .init(averagePower: 0.5, peakPower: 0.5))
     TranscriptionIndicatorView(status: .transcribing, meter: .init(averagePower: 0, peakPower: 0))
 	TranscriptionIndicatorView(status: .refining, meter: .init(averagePower: 0, peakPower: 0))
     TranscriptionIndicatorView(status: .prewarming, meter: .init(averagePower: 0, peakPower: 0))

@@ -4,6 +4,19 @@ import Foundation
 public enum RefinementTextProcessor {
 	public static func stripLeakedTags(_ text: String) -> String {
 		var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		// Some providers return legacy <think> markup in message content rather than
+		// the normalized reasoning field. Remove both complete blocks and orphaned
+		// tags before the result reaches the pasteboard or History.
+		result = result.replacingOccurrences(
+			of: #"(?is)<think\b[^>]*>.*?</think\s*>"#,
+			with: "",
+			options: .regularExpression
+		)
+		result = result.replacingOccurrences(
+			of: #"(?i)</?think\b[^>]*>"#,
+			with: "",
+			options: .regularExpression
+		)
 		let hadLeakedTag = result.hasPrefix("Text:")
 		if hadLeakedTag {
 			result = String(result.dropFirst(5))

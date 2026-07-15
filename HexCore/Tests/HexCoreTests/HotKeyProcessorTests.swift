@@ -735,6 +735,86 @@ struct HotKeyProcessorTests {
             ]
         )
     }
+
+	@Test
+	func reportsPressAndHoldDuration() {
+		var processor = withDependencies {
+			$0.date.now = Date(timeIntervalSince1970: 0)
+		} operation: {
+			HotKeyProcessor(hotkey: HotKey(key: nil, modifiers: [.option]))
+		}
+
+		withDependencies {
+			$0.date.now = Date(timeIntervalSince1970: 0)
+		} operation: {
+			_ = processor.process(keyEvent: KeyEvent(key: nil, modifiers: [.option]))
+		}
+		withDependencies {
+			$0.date.now = Date(timeIntervalSince1970: 0.8)
+		} operation: {
+			#expect(processor.hasBeenHeld(for: 0.75))
+		}
+	}
+
+	@Test
+	func doubleTapOnly_firstHeldTapStaysInert() {
+		runScenario(
+			hotkey: HotKey(key: nil, modifiers: [.option]),
+			useDoubleTapOnly: true,
+			lockingHoldDuration: 0.75,
+			steps: [
+				ScenarioStep(time: 0.0, key: nil, modifiers: [.option], expectedOutput: nil, expectedIsMatched: false),
+				ScenarioStep(time: 1.0, key: nil, modifiers: [], expectedOutput: nil, expectedIsMatched: false),
+			]
+		)
+	}
+
+	@Test
+	func doubleTapOnly_secondQuickTapLocksWithoutScreenAwareEligibility() {
+		runScenario(
+			hotkey: HotKey(key: nil, modifiers: [.option]),
+			useDoubleTapOnly: true,
+			lockingHoldDuration: 0.75,
+			steps: [
+				ScenarioStep(time: 0.0, key: nil, modifiers: [.option], expectedOutput: nil, expectedIsMatched: false),
+				ScenarioStep(time: 0.1, key: nil, modifiers: [], expectedOutput: nil, expectedIsMatched: false),
+				ScenarioStep(time: 0.2, key: nil, modifiers: [.option], expectedOutput: .startRecording, expectedIsMatched: true),
+				ScenarioStep(time: 0.3, key: nil, modifiers: [], expectedOutput: .locked, expectedIsMatched: true, expectedState: .doubleTapLock, expectedIsLongPressLocked: false),
+				ScenarioStep(time: 0.4, key: nil, modifiers: [.option], expectedOutput: .stopRecording, expectedIsMatched: false),
+			]
+		)
+	}
+
+	@Test
+	func doubleTapOnly_secondHeldTapActivatesAndLocksOnRelease() {
+		runScenario(
+			hotkey: HotKey(key: nil, modifiers: [.option]),
+			useDoubleTapOnly: true,
+			lockingHoldDuration: 0.75,
+			steps: [
+				ScenarioStep(time: 0.0, key: nil, modifiers: [.option], expectedOutput: nil, expectedIsMatched: false),
+				ScenarioStep(time: 0.1, key: nil, modifiers: [], expectedOutput: nil, expectedIsMatched: false),
+				ScenarioStep(time: 0.2, key: nil, modifiers: [.option], expectedOutput: .startRecording, expectedIsMatched: true, expectedState: .pressAndHold(startTime: Date(timeIntervalSince1970: 0.2))),
+				ScenarioStep(time: 1.0, key: nil, modifiers: [], expectedOutput: .locked, expectedIsMatched: true, expectedState: .doubleTapLock, expectedIsLongPressLocked: true),
+				ScenarioStep(time: 1.2, key: nil, modifiers: [.option], expectedOutput: .stopRecording, expectedIsMatched: false, expectedState: .idle),
+			]
+		)
+	}
+
+	@Test
+	func doubleTapLock_secondHeldTapActivatesAndLocksOnRelease() {
+		runScenario(
+			hotkey: HotKey(key: nil, modifiers: [.option]),
+			lockingHoldDuration: 0.75,
+			steps: [
+				ScenarioStep(time: 0.0, key: nil, modifiers: [.option], expectedOutput: .startRecording, expectedIsMatched: true),
+				ScenarioStep(time: 0.1, key: nil, modifiers: [], expectedOutput: .stopRecording, expectedIsMatched: false),
+				ScenarioStep(time: 0.2, key: nil, modifiers: [.option], expectedOutput: .startRecording, expectedIsMatched: true, expectedState: .pressAndHold(startTime: Date(timeIntervalSince1970: 0.2))),
+				ScenarioStep(time: 1.0, key: nil, modifiers: [], expectedOutput: .locked, expectedIsMatched: true, expectedState: .doubleTapLock),
+				ScenarioStep(time: 1.2, key: nil, modifiers: [.option], expectedOutput: .stopRecording, expectedIsMatched: false, expectedState: .idle),
+			]
+		)
+	}
 }
 
 struct ScenarioStep {
@@ -758,13 +838,17 @@ struct ScenarioStep {
     /// This is optional; if `nil` we won't check it.
     let expectedState: HotKeyProcessor.State?
 
+    /// Whether the lock was entered after the configured long-press duration.
+    let expectedIsLongPressLocked: Bool?
+
     init(
         time: TimeInterval,
         key: Key? = nil,
         modifiers: Modifiers = [],
         expectedOutput: HotKeyProcessor.Output? = nil,
         expectedIsMatched: Bool? = nil,
-        expectedState: HotKeyProcessor.State? = nil
+        expectedState: HotKeyProcessor.State? = nil,
+        expectedIsLongPressLocked: Bool? = nil
     ) {
         self.time = time
         self.key = key
@@ -772,6 +856,7 @@ struct ScenarioStep {
         self.expectedOutput = expectedOutput
         self.expectedIsMatched = expectedIsMatched
         self.expectedState = expectedState
+        self.expectedIsLongPressLocked = expectedIsLongPressLocked
     }
 }
 
@@ -779,6 +864,7 @@ func runScenario(
     hotkey: HotKey,
     useDoubleTapOnly: Bool = false,
     doubleTapLockEnabled: Bool = true,
+	lockingHoldDuration: TimeInterval? = nil,
     steps: [ScenarioStep]
 ) {
     // Sort steps by time, just in case they're not in ascending order
@@ -794,9 +880,10 @@ func runScenario(
         HotKeyProcessor(
             hotkey: hotkey,
             useDoubleTapOnly: useDoubleTapOnly,
-            doubleTapLockEnabled: doubleTapLockEnabled
+			doubleTapLockEnabled: doubleTapLockEnabled
         )
     }
+	processor.lockingHoldDuration = lockingHoldDuration
 
     // We'll step through each event
     for step in sortedSteps {
@@ -839,6 +926,13 @@ func runScenario(
                 #expect(
                     processor.state == expState,
                     "\(step.time)s: expected state=\(expState), got \(processor.state)"
+                )
+            }
+
+            if let expectedIsLongPressLocked = step.expectedIsLongPressLocked {
+                #expect(
+                    processor.isLongPressLocked == expectedIsLongPressLocked,
+                    "\(step.time)s: expected isLongPressLocked=\(expectedIsLongPressLocked), got \(processor.isLongPressLocked)"
                 )
             }
         }

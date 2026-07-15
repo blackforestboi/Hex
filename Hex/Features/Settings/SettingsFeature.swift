@@ -76,6 +76,7 @@ struct SettingsFeature {
     case startSettingHotKey
     case startSettingPasteLastTranscriptHotkey
 		case startSettingRefinedHotKey
+		case cancelHotKeyCapture
     case clearPasteLastTranscriptHotkey
     case keyEvent(KeyEvent)
     case toggleOpenOnLogin(Bool)
@@ -133,15 +134,17 @@ struct SettingsFeature {
   @Dependency(\.soundEffects) var soundEffects
   @Dependency(\.transcriptPersistence) var transcriptPersistence
 
-  private func deleteAudioEffect(for transcripts: [Transcript]) -> Effect<Action> {
+  private func deleteTranscriptFilesEffect(for transcripts: [Transcript]) -> Effect<Action> {
     .run { [transcriptPersistence] _ in
       for transcript in transcripts {
-        try? await transcriptPersistence.deleteAudio(transcript)
+		try? await transcriptPersistence.deleteArtifacts(transcript)
       }
     }
   }
 
   private func beginCapture(_ target: HotKeyCaptureTarget, state: inout State) {
+		endAllCaptures(state: &state)
+
     switch target {
     case .recording:
       state.$isSettingHotKey.withLock { $0 = true }
@@ -154,6 +157,12 @@ struct SettingsFeature {
 			state.currentRefinedModifiers = .init(modifiers: [])
     }
   }
+
+	private func endAllCaptures(state: inout State) {
+		endCapture(.recording, state: &state)
+		endCapture(.pasteLastTranscript, state: &state)
+		endCapture(.refinedRecording, state: &state)
+	}
 
   private func endCapture(_ target: HotKeyCaptureTarget, state: inout State) {
     switch target {
@@ -444,8 +453,13 @@ struct SettingsFeature {
 		case .startSettingRefinedHotKey:
 			beginCapture(.refinedRecording, state: &state)
 			return .none
+
+		case .cancelHotKeyCapture:
+			endAllCaptures(state: &state)
+			return .none
         
       case .clearPasteLastTranscriptHotkey:
+			endCapture(.pasteLastTranscript, state: &state)
         state.$hexSettings.withLock { $0.pasteLastTranscriptHotkey = nil }
         return .none
 
@@ -591,7 +605,7 @@ struct SettingsFeature {
             history.history.removeAll()
           }
 
-          return deleteAudioEffect(for: transcripts)
+		  return deleteTranscriptFilesEffect(for: transcripts)
         }
         
         return .none
