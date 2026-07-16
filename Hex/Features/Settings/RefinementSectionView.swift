@@ -194,6 +194,10 @@ struct RefinementSectionView: View {
 			if oldProvider == .gemini { persistGeminiAPIKey() }
 			if oldProvider == .openRouter { persistOpenRouterAPIKey() }
 		}
+		.onChange(of: openRouterAPIKey) { _, key in
+			// Clearing the field explicitly opts out of the saved Keychain credential.
+			if key.isEmpty { persistOpenRouterAPIKey() }
+		}
 		.onDisappear {
 			persistGeminiAPIKey()
 			persistOpenRouterAPIKey()
