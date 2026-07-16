@@ -6,7 +6,7 @@ final class RefinementTests: XCTestCase {
 		let settings = try JSONDecoder().decode(HexSettings.self, from: Data("{}".utf8))
 		XCTAssertEqual(settings.refinementMode, .raw)
 		XCTAssertEqual(settings.refinementProvider, .apple)
-			XCTAssertEqual(settings.refinementInstructions, "")
+			XCTAssertEqual(settings.refinementInstructions, HexSettings.defaultRefinementInstructions)
 			XCTAssertNil(settings.openRouterModelID)
 			XCTAssertNil(settings.screenAwareOpenRouterModelID)
 			XCTAssertEqual(settings.screenAwareInputSource, .localOCR)

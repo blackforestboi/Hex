@@ -16,6 +16,28 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		.init(pattern: "er+"),
 		.init(pattern: "hm+")
 	]
+	public static let defaultRefinementInstructions = """
+	# Voice Memo Refinement Guidelines
+
+	- Stay faithful to the source: don't invent details, don't omit any, keep the qualitative language and context that carries meaning.
+	- Match the requested tone/style; default to casual if none is given.
+	- Use bullets or numbered lists for any list of items, unless told otherwise.
+	- Organize into clear paragraphs and cut filler words that don't change the meaning.
+
+	# Human Writing Style
+
+	- **No em-dashes or dashes to segment sentences.** Use two shorter sentences instead.
+	- Be specific. Concrete facts beat vague praise.
+	- Use simple verbs: is, has, was, did. Not "serves as," "boasts," "showcases."
+	- Skip cheerleading and forced significance. State facts; don't explain why they matter or claim they "reflect broader trends."
+	- Repeat words when needed instead of cycling synonyms.
+	- Short sentences are fine. Not everything needs three clauses.
+	- Attribute opinions to a specific person ("Roger Ebert wrote...") not a vague group ("experts say...").
+	- Use lowercase headings. Title case reads as AI-generated.
+	- Bold sparingly.
+	- Use contractions: it's, don't, won't.
+	- Avoid AI tells: stock vocabulary (delve, pivotal, tapestry), "-ing" phrases tacked onto sentence ends, "despite challenges..." formulas, and rule-of-three lists.
+	"""
 
 	public static var defaultPasteLastTranscriptHotkeyDescription: String {
 		let modifiers = defaultPasteLastTranscriptHotkey.modifiers.sorted.map { $0.stringValue }.joined()
@@ -160,7 +182,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		removePunctuation: Bool = false,
 		refinementMode: RefinementMode = .raw,
 		refinementProvider: RefinementProvider = .apple,
-			refinementInstructions: String = "",
+			refinementInstructions: String = HexSettings.defaultRefinementInstructions,
 			openRouterModelID: String? = nil,
 			screenAwareOpenRouterModelID: String? = nil,
 			screenAwareDictationEnabled: Bool = true,
