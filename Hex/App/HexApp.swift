@@ -16,6 +16,10 @@ struct HexApp: App {
             MenuBarCopyLastTranscriptButton()
             MenuBarRefineSelectedTextButton()
 
+            Button("History") {
+                appDelegate.presentHistoryView()
+            }
+
             Button("Settings…") {
                 appDelegate.presentSettingsView()
             }.keyboardShortcut(",")

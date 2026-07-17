@@ -112,6 +112,16 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	func presentSettingsView() {
+		HexApp.appStore.send(.setActiveTab(.settings))
+		presentAppWindow()
+	}
+
+	func presentHistoryView() {
+		HexApp.appStore.send(.setActiveTab(.history))
+		presentAppWindow()
+	}
+
+	private func presentAppWindow() {
 		if let settingsWindow = settingsWindow {
 			settingsWindow.makeKeyAndOrderFront(nil)
 			NSApp.activate(ignoringOtherApps: true)
