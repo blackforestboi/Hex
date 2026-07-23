@@ -32,11 +32,13 @@ struct HexApp: App {
 				NSApplication.shared.terminate(nil)
 			}.keyboardShortcut("q")
 		} label: {
-			Image("OctoMenuBarIcon")
-				.resizable()
-				.renderingMode(.template)
-				.scaledToFit()
-				.frame(width: 18, height: 18)
+			if let image = menuBarIconImage() {
+				Image(nsImage: image)
+					.renderingMode(.template)
+			} else {
+				Image(systemName: "hexagon")
+					.imageScale(.small)
+			}
 		}
 		.commands {
 			CommandGroup(after: .appInfo) {
@@ -49,5 +51,15 @@ struct HexApp: App {
 
 			CommandGroup(replacing: .help) {}
 		}
+	}
+
+	private func menuBarIconImage() -> NSImage? {
+		guard let image = NSImage(named: "OctoMenuBarIcon"), image.size.width > 0 else {
+			return nil
+		}
+
+		let ratio = image.size.height / image.size.width
+		image.size = NSSize(width: 18 / ratio, height: 18)
+		return image
 	}
 }
