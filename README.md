@@ -6,7 +6,19 @@ Press-and-hold a hotkey to transcribe your voice and paste the result wherever y
 
 > **Note:** Octo is currently only available for **Apple Silicon** Macs.
 
-Octo is an independently maintained fork of [Hex](https://github.com/kitlangton/Hex) by Kit Langton. It has substantially evolved while retaining the upstream MIT license and its attribution. Octo supports both [Parakeet TDT v3](https://github.com/FluidInference/FluidAudio) via [FluidAudio](https://github.com/FluidInference/FluidAudio) and [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device transcription. It uses [The Composable Architecture](https://github.com/pointfreeco/swift-composable-architecture) for state management.
+> **Fork notice:** Octo is a new project based on a fork of [Hex](https://github.com/kitlangton/Hex) by Kit Langton. It retains Hex's MIT license and attribution while developing independently under the Octo name.
+
+Octo supports both [Parakeet TDT v3](https://github.com/FluidInference/FluidAudio) via [FluidAudio](https://github.com/FluidInference/FluidAudio) and [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device transcription. It uses [The Composable Architecture](https://github.com/pointfreeco/swift-composable-architecture) for state management.
+
+## What Octo improves
+
+- Refine selected text from the current screen or a selected portion of the screen using custom prompts.
+- Use your own OpenAI or cloud subscription for AI workflows.
+- Use OpenRouter, OpenAI, and direct cloud APIs for AI workflows.
+- Enjoy an improved recording pill and recording indicator.
+- Keep an extensive history of everything recorded, transcribed, or processed by AI, including every output.
+- Rely on a more fail-safe recording, transcription, and AI-processing workflow.
+- Reposition and resize the recording indicator to fit your workspace.
 
 ## Instructions
 
