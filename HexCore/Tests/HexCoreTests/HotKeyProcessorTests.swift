@@ -771,6 +771,22 @@ struct HotKeyProcessorTests {
 	}
 
 	@Test
+	func doubleTapOnly_longPressOnDemandCanBeDisabled() {
+		runScenario(
+			hotkey: HotKey(key: nil, modifiers: [.option]),
+			useDoubleTapOnly: true,
+			allowLongPressForOnDemand: false,
+			lockingHoldDuration: 0.75,
+			steps: [
+				ScenarioStep(time: 0.0, key: nil, modifiers: [.option], expectedOutput: nil, expectedIsMatched: false),
+				ScenarioStep(time: 1.0, key: nil, modifiers: [], expectedOutput: nil, expectedIsMatched: false),
+				ScenarioStep(time: 1.1, key: nil, modifiers: [.option], expectedOutput: .startRecording, expectedIsMatched: true),
+				ScenarioStep(time: 1.2, key: nil, modifiers: [], expectedOutput: .locked, expectedIsMatched: true),
+			]
+		)
+	}
+
+	@Test
 	func doubleTapOnly_secondQuickTapLocksWithoutScreenAwareEligibility() {
 		runScenario(
 			hotkey: HotKey(key: nil, modifiers: [.option]),
@@ -932,6 +948,7 @@ func pressAndHold_heldSecondTapCapturesScreenContext() {
 func runScenario(
     hotkey: HotKey,
     useDoubleTapOnly: Bool = false,
+	allowLongPressForOnDemand: Bool = true,
 	doubleTapLockEnabled: Bool = true,
 	lockingHoldDuration: TimeInterval? = nil,
 	screenAwareSecondTapEnabled: Bool = false,
@@ -951,6 +968,7 @@ func runScenario(
         HotKeyProcessor(
             hotkey: hotkey,
             useDoubleTapOnly: useDoubleTapOnly,
+			allowLongPressForOnDemand: allowLongPressForOnDemand,
 			doubleTapLockEnabled: doubleTapLockEnabled
         )
     }

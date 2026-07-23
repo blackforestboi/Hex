@@ -22,6 +22,14 @@ struct ScreenCaptureSelection {
 		}
 	}
 
+	var isMoving: Bool {
+		if case .moving = phase {
+			true
+		} else {
+			false
+		}
+	}
+
 	mutating func begin(at point: CGPoint) {
 		rectangle = nil
 		phase = .drawing(anchor: point, hasExceededDragThreshold: false)

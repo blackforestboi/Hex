@@ -22,6 +22,20 @@ final class ScreenCaptureSelectionTests: XCTestCase {
 		XCTAssertEqual(selection.rectangle, CGRect(x: 40, y: 30, width: 30, height: 20))
 	}
 
+	func testMovingStateTracksSpaceHold() {
+		var selection = ScreenCaptureSelection(minimumDragDistance: 20)
+		selection.begin(at: CGPoint(x: 10, y: 20))
+		selection.drag(to: CGPoint(x: 110, y: 220))
+
+		XCTAssertFalse(selection.isMoving)
+
+		selection.beginMoving(at: CGPoint(x: 50, y: 70))
+		XCTAssertTrue(selection.isMoving)
+
+		selection.endMoving()
+		XCTAssertFalse(selection.isMoving)
+	}
+
 	func testReleasingSpaceRetainsTheMovedRectangleAsTheResizeBaseline() {
 		var selection = ScreenCaptureSelection()
 		selection.begin(at: CGPoint(x: 10, y: 10))

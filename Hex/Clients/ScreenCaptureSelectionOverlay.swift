@@ -1,4 +1,17 @@
 import AppKit
+import os
+
+private enum ScreenCaptureSelectionState {
+	private static let lock = OSAllocatedUnfairLock(initialState: false)
+
+	static var isActive: Bool {
+		lock.withLock { $0 }
+	}
+
+	static func setActive(_ isActive: Bool) {
+		lock.withLock { $0 = isActive }
+	}
+}
 
 private final class ScreenCaptureSelectionWindow: NSPanel {
 	override var canBecomeKey: Bool { true }
@@ -70,6 +83,9 @@ private final class ScreenCaptureSelectionOverlayController: NSObject, NSWindowD
 	private func finish(_ result: Result<CGRect?, Error>) {
 		guard let continuation else { return }
 		self.continuation = nil
+		// Clear this before resuming the continuation so a second Escape goes
+		// straight back to the recording hotkey path, even if it follows quickly.
+		ScreenCaptureSelectionState.setActive(false)
 		if let keyEventMonitor {
 			NSEvent.removeMonitor(keyEventMonitor)
 			self.keyEventMonitor = nil
@@ -82,7 +98,13 @@ private final class ScreenCaptureSelectionOverlayController: NSObject, NSWindowD
 
 @MainActor
 enum ScreenCaptureSelectionOverlay {
+	nonisolated static var isSelectingRegion: Bool {
+		ScreenCaptureSelectionState.isActive
+	}
+
 	static func selectRegion(on screenFrame: CGRect, backingScaleFactor: CGFloat) async throws -> CGRect? {
+		ScreenCaptureSelectionState.setActive(true)
+		defer { ScreenCaptureSelectionState.setActive(false) }
 		let controller = ScreenCaptureSelectionOverlayController(
 			screenFrame: screenFrame,
 			backingScaleFactor: backingScaleFactor
@@ -134,17 +156,64 @@ private final class ScreenCaptureSelectionOverlayView: NSView {
 
 			NSColor.white.withAlphaComponent(0.9).setStroke()
 			NSBezierPath(rect: rectangle).stroke()
+
+			if !selection.isMoving {
+				drawMoveHint(above: rectangle)
+			}
+		}
+	}
+
+	private func drawMoveHint(above rectangle: CGRect) {
+		let keyLabel = "Space"
+		let trailingLabel = "to move"
+		let keyFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+		let textFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+		let keyTextSize = keyLabel.size(withAttributes: [.font: keyFont])
+		let trailingTextSize = trailingLabel.size(withAttributes: [.font: textFont])
+		let keyInsets = CGSize(width: 7, height: 3)
+		let keySize = CGSize(
+			width: keyTextSize.width + (keyInsets.width * 2),
+			height: keyTextSize.height + (keyInsets.height * 2)
+		)
+		let spacing: CGFloat = 5
+		let hintSize = CGSize(
+			width: keySize.width + spacing + trailingTextSize.width,
+			height: max(keySize.height, trailingTextSize.height)
+		)
+
+		let horizontalPadding: CGFloat = 8
+		let verticalPadding: CGFloat = 8
+		let preferredOrigin = CGPoint(x: rectangle.minX, y: rectangle.maxY + verticalPadding)
+		let x = min(max(preferredOrigin.x, horizontalPadding), bounds.maxX - hintSize.width - horizontalPadding)
+		let y: CGFloat
+		if preferredOrigin.y + hintSize.height <= bounds.maxY - verticalPadding {
+			y = preferredOrigin.y
+		} else {
+			y = max(bounds.minY + verticalPadding, rectangle.minY - hintSize.height - verticalPadding)
 		}
 
-		let instructions = "Drag to select  •  Hold Space to move  •  Esc to retry"
-		let attributes: [NSAttributedString.Key: Any] = [
-			.font: NSFont.systemFont(ofSize: 13, weight: .medium),
+		let keyRect = CGRect(origin: CGPoint(x: x, y: y), size: keySize)
+		let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 4, yRadius: 4)
+		NSColor.black.withAlphaComponent(0.72).setFill()
+		keyPath.fill()
+		NSColor.white.withAlphaComponent(0.45).setStroke()
+		keyPath.lineWidth = 1
+		keyPath.stroke()
+
+		let keyTextOrigin = CGPoint(
+			x: keyRect.midX - (keyTextSize.width / 2),
+			y: keyRect.midY - (keyTextSize.height / 2)
+		)
+		keyLabel.draw(at: keyTextOrigin, withAttributes: [
+			.font: keyFont,
 			.foregroundColor: NSColor.white
-		]
-		let size = instructions.size(withAttributes: attributes)
-		instructions.draw(
-			at: CGPoint(x: (bounds.width - size.width) / 2, y: 24),
-			withAttributes: attributes
+		])
+		trailingLabel.draw(
+			at: CGPoint(x: keyRect.maxX + spacing, y: y + (hintSize.height - trailingTextSize.height) / 2),
+			withAttributes: [
+				.font: textFont,
+				.foregroundColor: NSColor.white
+			]
 		)
 	}
 

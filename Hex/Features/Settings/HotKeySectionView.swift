@@ -64,6 +64,20 @@ struct HotKeySectionView: View {
                 } icon: {
                     Image(systemName: "hand.tap.fill")
                 }
+
+				if store.hexSettings.useDoubleTapOnly {
+					Label {
+						Toggle(
+							"Allow long press for on-demand",
+							isOn: Binding(
+								get: { store.hexSettings.allowLongPressForOnDemand },
+								set: { store.send(.setAllowLongPressForOnDemand($0)) }
+							)
+						)
+					} icon: {
+						Image(systemName: "hand.raised.fill")
+					}
+				}
             }
 
             // Minimum key time (for modifier-only shortcuts)
@@ -140,8 +154,9 @@ struct HotKeySectionView: View {
 
     private var hotKeySequences: [HotKeySequence] {
         if store.hexSettings.doubleTapLockEnabled {
-            [
-                HotKeySequence(title: String(localized: "Start on-demand transcription"), presses: [.long]),
+            ((!store.hexSettings.useDoubleTapOnly || store.hexSettings.allowLongPressForOnDemand)
+				? [HotKeySequence(title: String(localized: "Start on-demand transcription or insta-refine selected text"), presses: [.long])]
+                : []) + [
                 HotKeySequence(title: String(localized: "Start hands-free transcription"), presses: [.short, .short]),
                 HotKeySequence(title: String(localized: "Start screen-aware transcription"), presses: [.short, .long]),
                 HotKeySequence(title: String(localized: "Finish normally"), presses: [.short]),

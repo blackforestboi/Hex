@@ -818,6 +818,7 @@ private extension TranscriptionFeature {
 	          && hexSettings.useDoubleTapOnly
 	        hotKeyProcessor.doubleTapLockEnabled = hexSettings.doubleTapLockEnabled
 	        hotKeyProcessor.useDoubleTapOnly = useDoubleTapOnly
+	        hotKeyProcessor.allowLongPressForOnDemand = hexSettings.allowLongPressForOnDemand
 	        hotKeyProcessor.lockingHoldDuration = max(
 	          hexSettings.minimumKeyTime,
 	          ScreenAwareActivation.minimumHoldDuration
@@ -828,6 +829,13 @@ private extension TranscriptionFeature {
 
         switch inputEvent {
         case .keyboard(let keyEvent):
+		  // The screen-area overlay owns Escape while a region is being drawn.
+		  // Let its local monitor reset/cancel the rectangle without the global
+		  // hotkey processor cancelling the active recording.
+		  if keyEvent.key == .escape, ScreenCaptureSelectionOverlay.isSelectingRegion {
+			return false
+		  }
+
           // If Escape is pressed with no modifiers while idle, let's treat that as `cancel`.
           if keyEvent.key == .escape, keyEvent.modifiers.isEmpty,
              hotKeyProcessor.state == .idle
@@ -2115,6 +2123,7 @@ private extension TranscriptionFeature {
 struct TranscriptionView: View {
   @Bindable var store: StoreOf<TranscriptionFeature>
   @ObserveInjection var inject
+  @Shared(.hexSettings) var hexSettings: HexSettings
 
   var status: TranscriptionIndicatorView.Status {
 	if let error = store.error {
@@ -2137,8 +2146,9 @@ struct TranscriptionView: View {
   var body: some View {
 	let indicatorStatus = status
     TranscriptionIndicatorView(
-	  status: indicatorStatus,
-	  meter: indicatorStatus == .recording ? store.meter : .init(averagePower: 0, peakPower: 0)
+		  status: indicatorStatus,
+		  meter: indicatorStatus == .recording ? store.meter : .init(averagePower: 0, peakPower: 0),
+		  size: hexSettings.indicatorSize
     )
     .task {
       await store.send(.task).finish()

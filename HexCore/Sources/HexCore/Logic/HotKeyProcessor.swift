@@ -98,6 +98,10 @@ public struct HotKeyProcessor {
     /// A held first press still activates an ordinary press-and-hold recording.
     public var useDoubleTapOnly: Bool = false
 
+    /// Allows the first press in double-tap-only mode to become an on-demand
+    /// recording when held beyond the double-tap threshold.
+    public var allowLongPressForOnDemand: Bool = true
+
     /// When set, a second press that would establish a double-tap lock remains
     /// held long enough to measure this duration before it enters the locked state.
     public var lockingHoldDuration: TimeInterval?
@@ -164,17 +168,20 @@ public struct HotKeyProcessor {
     /// Creates a new hotkey processor
     /// - Parameters:
     ///   - hotkey: The key combination to detect
-    ///   - useDoubleTapOnly: If true, quick taps require a double-tap lock while holds still record
+    ///   - useDoubleTapOnly: If true, quick taps require a double-tap lock
+    ///   - allowLongPressForOnDemand: If true, a held first press still records on demand
     ///   - doubleTapLockEnabled: If false, disables double-tap lock behavior
     ///   - minimumKeyTime: Minimum duration for valid key press (overridden to modifierOnlyMinimumDuration for modifier-only)
     public init(
         hotkey: HotKey,
         useDoubleTapOnly: Bool = false,
+        allowLongPressForOnDemand: Bool = true,
         doubleTapLockEnabled: Bool = true,
         minimumKeyTime: TimeInterval = HexCoreConstants.defaultMinimumKeyTime
     ) {
         self.hotkey = hotkey
         self.useDoubleTapOnly = useDoubleTapOnly
+        self.allowLongPressForOnDemand = allowLongPressForOnDemand
         self.doubleTapLockEnabled = doubleTapLockEnabled
         self.minimumKeyTime = minimumKeyTime
     }
@@ -441,7 +448,7 @@ extension HotKeyProcessor {
                 } else {
                     lastTapAt = nil
                     state = .pendingPressAndHold(startTime: now)
-                    return .armPendingPressAndHold
+                    return allowLongPressForOnDemand ? .armPendingPressAndHold : nil
                 }
             } else {
                 // Normal press => .pressAndHold => .startRecording
@@ -510,6 +517,10 @@ extension HotKeyProcessor {
         case let .pendingPressAndHold(startTime):
             let elapsed = now.timeIntervalSince(startTime)
             guard isReleaseForActiveHotkey(e) else {
+                guard allowLongPressForOnDemand else {
+                    resetToIdle()
+                    return nil
+                }
                 if elapsed >= Self.doubleTapThreshold {
                     // The delayed activation has fired; from this event onward,
                     // use the ordinary press-and-hold conflict behavior.
@@ -525,6 +536,10 @@ extension HotKeyProcessor {
             secondTapHoldPendingRelease = false
             lastTapWasLong = false
             isLongPressLocked = false
+            guard allowLongPressForOnDemand else {
+                lastTapAt = now
+                return nil
+            }
             if wasQuickTap {
                 lastTapAt = now
                 return .cancelPendingPressAndHold

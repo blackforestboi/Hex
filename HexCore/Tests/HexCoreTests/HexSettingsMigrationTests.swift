@@ -11,6 +11,8 @@ final class HexSettingsMigrationTests: XCTestCase {
 		XCTAssertEqual(decoded.soundEffectsVolume, HexSettings.baseSoundEffectsVolume)
 		XCTAssertEqual(decoded.openOnLogin, true)
 		XCTAssertEqual(decoded.showDockIcon, false)
+		XCTAssertEqual(decoded.indicatorSize, .regular)
+		XCTAssertEqual(decoded.indicatorLocation, .topCenter)
 		XCTAssertEqual(decoded.selectedModel, "whisper-large-v3")
 		XCTAssertEqual(decoded.useClipboardPaste, false)
 		XCTAssertEqual(decoded.preventSystemSleep, true)
@@ -19,6 +21,7 @@ final class HexSettingsMigrationTests: XCTestCase {
 		XCTAssertEqual(decoded.copyToClipboard, true)
 		XCTAssertTrue(decoded.superFastModeEnabled)
 		XCTAssertEqual(decoded.useDoubleTapOnly, true)
+		XCTAssertTrue(decoded.allowLongPressForOnDemand)
 		XCTAssertEqual(decoded.doubleTapLockEnabled, true)
 		XCTAssertEqual(decoded.outputLanguage, "en")
 		XCTAssertEqual(decoded.selectedMicrophoneID, "builtin:mic")
@@ -50,8 +53,20 @@ final class HexSettingsMigrationTests: XCTestCase {
 		XCTAssertEqual(HexSettings().stopDelayMilliseconds, 0)
 	}
 
+	func testLongPressOnDemandIsEnabledByDefault() {
+		XCTAssertTrue(HexSettings().allowLongPressForOnDemand)
+	}
+
 	func testNewSettingsDisableScreenAwareDictationByDefault() {
 		XCTAssertFalse(HexSettings().screenAwareDictationEnabled)
+	}
+
+	func testIndicatorPreferencesRoundTrip() throws {
+		let settings = HexSettings(indicatorSize: .large, indicatorLocation: .bottomTrailing)
+		let decoded = try JSONDecoder().decode(HexSettings.self, from: JSONEncoder().encode(settings))
+
+		XCTAssertEqual(decoded.indicatorSize, .large)
+		XCTAssertEqual(decoded.indicatorLocation, .bottomTrailing)
 	}
 
 	func testNewSettingsCheckForAnAvailableSubscriptionProvider() {

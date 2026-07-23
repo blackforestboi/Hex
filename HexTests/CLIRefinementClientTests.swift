@@ -16,7 +16,7 @@ final class CLIRefinementClientTests: XCTestCase {
 		XCTAssertTrue(command.arguments.contains("read-only"))
 		XCTAssertTrue(command.arguments.contains("--ephemeral"))
 		XCTAssertTrue(command.arguments.contains("--ignore-user-config"))
-		XCTAssertTrue(command.arguments.contains("model_reasoning_effort=\"none\""))
+		XCTAssertFalse(command.arguments.contains("model_reasoning_effort=\"none\""))
 		XCTAssertEqual(command.arguments.last, "-")
 	}
 
@@ -31,6 +31,9 @@ final class CLIRefinementClientTests: XCTestCase {
 		XCTAssertTrue(command.arguments.contains("--safe-mode"))
 		XCTAssertTrue(command.arguments.contains("--tools"))
 		XCTAssertTrue(command.arguments.contains(""))
+		XCTAssertTrue(command.arguments.contains("--system-prompt"))
+		XCTAssertTrue(command.arguments.contains("text"))
+		XCTAssertFalse(command.arguments.contains("--mcp-config"))
 		XCTAssertFalse(command.arguments.contains("--bare"))
 	}
 
@@ -77,6 +80,7 @@ final class CLIRefinementClientTests: XCTestCase {
 			"Refined transcript"
 		)
 		XCTAssertNil(CLIRefinementClient.outputText(from: "{\"type\":\"result\"}", provider: .claude))
+		XCTAssertEqual(CLIRefinementClient.outputText(from: "Refined transcript", provider: .claude), "Refined transcript")
 	}
 
 	func testAuthenticationChecksUseOnlyTheCLIStatusCommands() {

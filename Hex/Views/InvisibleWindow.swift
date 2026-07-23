@@ -102,3 +102,47 @@ extension InvisibleWindow: NSWindowDelegate {
     return window
   }
 }
+
+/// A tightly-scoped transparent panel used to make the otherwise click-through
+/// transcription indicator interactive without swallowing unrelated desktop clicks.
+final class PillInteractionPanel: NSPanel {
+  init(onTap: @escaping () -> Void) {
+    super.init(
+      contentRect: .zero,
+      styleMask: [.borderless, .nonactivatingPanel],
+      backing: .buffered,
+      defer: false
+    )
+
+    level = .statusBar + 1
+    backgroundColor = .clear
+    isOpaque = false
+    hasShadow = false
+    hidesOnDeactivate = false
+    canHide = false
+    collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces, .stationary, .ignoresCycle]
+    contentView = NSHostingView(rootView: PillInteractionView(onTap: onTap))
+    orderOut(nil)
+  }
+
+  func update(frame: NSRect?) {
+    guard let frame, frame.width > 0, frame.height > 0 else {
+      orderOut(nil)
+      return
+    }
+
+    setFrame(frame, display: true)
+    orderFrontRegardless()
+  }
+}
+
+private struct PillInteractionView: View {
+  let onTap: () -> Void
+
+  var body: some View {
+    Color.clear
+      .contentShape(Rectangle())
+      .onTapGesture(perform: onTap)
+      .accessibilityLabel("Open History")
+  }
+}

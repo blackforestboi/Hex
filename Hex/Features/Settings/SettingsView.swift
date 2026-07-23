@@ -32,6 +32,7 @@ struct SettingsView: View {
 			}
 
 			HotKeySectionView(store: store)
+			IndicatorSectionView(store: store)
 			RefinementSectionView(store: store)
           
 			if microphonePermission == .granted {

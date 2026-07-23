@@ -6,6 +6,40 @@ public enum RecordingAudioBehavior: String, Codable, CaseIterable, Equatable, Se
 	case doNothing
 }
 
+public enum IndicatorSize: String, Codable, CaseIterable, Equatable, Sendable {
+	case compact
+	case regular
+	case large
+
+	public var displayName: String {
+		switch self {
+		case .compact: "Compact"
+		case .regular: "Regular"
+		case .large: "Large"
+		}
+	}
+}
+
+public enum IndicatorLocation: String, Codable, CaseIterable, Equatable, Sendable {
+	case topLeading
+	case topCenter
+	case topTrailing
+	case bottomLeading
+	case bottomCenter
+	case bottomTrailing
+
+	public var displayName: String {
+		switch self {
+		case .topLeading: "Top Left"
+		case .topCenter: "Top Center"
+		case .topTrailing: "Top Right"
+		case .bottomLeading: "Bottom Left"
+		case .bottomCenter: "Bottom Center"
+		case .bottomTrailing: "Bottom Right"
+		}
+	}
+}
+
 /// User-configurable settings saved to disk.
 public struct HexSettings: Codable, Equatable, Sendable {
 	public static let defaultPasteLastTranscriptHotkey = HotKey(key: .v, modifiers: [.option, .shift])
@@ -50,6 +84,8 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var hotkey: HotKey
 	public var openOnLogin: Bool
 	public var showDockIcon: Bool
+	public var indicatorSize: IndicatorSize
+	public var indicatorLocation: IndicatorLocation
 	public var selectedModel: String
 	public var useClipboardPaste: Bool
 	public var preventSystemSleep: Bool
@@ -59,6 +95,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var copyToClipboard: Bool
 	public var superFastModeEnabled: Bool
 	public var useDoubleTapOnly: Bool
+	public var allowLongPressForOnDemand: Bool
 	public var doubleTapLockEnabled: Bool
 	public var outputLanguage: String?
 	public var selectedMicrophoneID: String?
@@ -178,6 +215,8 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		hotkey: HotKey = .init(key: nil, modifiers: [.option]),
 		openOnLogin: Bool = false,
 		showDockIcon: Bool = true,
+		indicatorSize: IndicatorSize = .regular,
+		indicatorLocation: IndicatorLocation = .topCenter,
 		selectedModel: String = ParakeetModel.multilingualV3.identifier,
 		useClipboardPaste: Bool = true,
 		preventSystemSleep: Bool = true,
@@ -187,6 +226,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		copyToClipboard: Bool = false,
 		superFastModeEnabled: Bool = true,
 		useDoubleTapOnly: Bool = false,
+		allowLongPressForOnDemand: Bool = true,
 		doubleTapLockEnabled: Bool = true,
 		outputLanguage: String? = nil,
 		selectedMicrophoneID: String? = nil,
@@ -220,6 +260,8 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.hotkey = hotkey
 		self.openOnLogin = openOnLogin
 		self.showDockIcon = showDockIcon
+		self.indicatorSize = indicatorSize
+		self.indicatorLocation = indicatorLocation
 		self.selectedModel = selectedModel
 		self.useClipboardPaste = useClipboardPaste
 		self.preventSystemSleep = preventSystemSleep
@@ -229,6 +271,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.copyToClipboard = copyToClipboard
 		self.superFastModeEnabled = superFastModeEnabled
 		self.useDoubleTapOnly = useDoubleTapOnly
+		self.allowLongPressForOnDemand = allowLongPressForOnDemand
 		self.doubleTapLockEnabled = doubleTapLockEnabled
 		self.outputLanguage = outputLanguage
 		self.selectedMicrophoneID = selectedMicrophoneID
@@ -301,6 +344,8 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case hotkey
 	case openOnLogin
 	case showDockIcon
+	case indicatorSize
+	case indicatorLocation
 	case selectedModel
 	case useClipboardPaste
 	case preventSystemSleep
@@ -311,6 +356,7 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case copyToClipboard
 	case superFastModeEnabled
 	case useDoubleTapOnly
+	case allowLongPressForOnDemand
 	case doubleTapLockEnabled
 	case outputLanguage
 	case selectedMicrophoneID
@@ -403,6 +449,8 @@ private enum HexSettingsSchema {
 		SettingsField(.hotkey, keyPath: \.hotkey, default: defaults.hotkey).eraseToAny(),
 		SettingsField(.openOnLogin, keyPath: \.openOnLogin, default: defaults.openOnLogin).eraseToAny(),
 		SettingsField(.showDockIcon, keyPath: \.showDockIcon, default: defaults.showDockIcon).eraseToAny(),
+		SettingsField(.indicatorSize, keyPath: \.indicatorSize, default: defaults.indicatorSize).eraseToAny(),
+		SettingsField(.indicatorLocation, keyPath: \.indicatorLocation, default: defaults.indicatorLocation).eraseToAny(),
 		SettingsField(.selectedModel, keyPath: \.selectedModel, default: defaults.selectedModel).eraseToAny(),
 		SettingsField(.useClipboardPaste, keyPath: \.useClipboardPaste, default: defaults.useClipboardPaste).eraseToAny(),
 		SettingsField(.preventSystemSleep, keyPath: \.preventSystemSleep, default: defaults.preventSystemSleep).eraseToAny(),
@@ -425,6 +473,7 @@ private enum HexSettingsSchema {
 		SettingsField(.copyToClipboard, keyPath: \.copyToClipboard, default: defaults.copyToClipboard).eraseToAny(),
 		SettingsField(.superFastModeEnabled, keyPath: \.superFastModeEnabled, default: defaults.superFastModeEnabled).eraseToAny(),
 		SettingsField(.useDoubleTapOnly, keyPath: \.useDoubleTapOnly, default: defaults.useDoubleTapOnly).eraseToAny(),
+		SettingsField(.allowLongPressForOnDemand, keyPath: \.allowLongPressForOnDemand, default: defaults.allowLongPressForOnDemand).eraseToAny(),
 		SettingsField(.doubleTapLockEnabled, keyPath: \.doubleTapLockEnabled, default: defaults.doubleTapLockEnabled).eraseToAny(),
 		SettingsField(
 			.outputLanguage,

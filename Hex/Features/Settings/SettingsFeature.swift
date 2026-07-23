@@ -82,6 +82,7 @@ struct SettingsFeature {
     case setCopyToClipboard(Bool)
     case setDoubleTapLockEnabled(Bool)
     case setUseDoubleTapOnly(Bool)
+	case setAllowLongPressForOnDemand(Bool)
     case setMinimumKeyTime(Double)
     case setStopDelayMilliseconds(Int)
     case setOutputLanguage(String?)
@@ -523,6 +524,10 @@ struct SettingsFeature {
           $0.useDoubleTapOnly = enabled && $0.doubleTapLockEnabled
         }
         return .none
+
+	  case let .setAllowLongPressForOnDemand(enabled):
+		state.$hexSettings.withLock { $0.allowLongPressForOnDemand = enabled }
+		return .none
 
       case let .setMinimumKeyTime(value):
         state.$hexSettings.withLock { $0.minimumKeyTime = value }
