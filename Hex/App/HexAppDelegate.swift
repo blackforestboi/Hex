@@ -23,6 +23,13 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			appLogger.debug("Running in testing mode")
 			return
 		}
+		configureDockIconForAppearance()
+		DistributedNotificationCenter.default().addObserver(
+			self,
+			selector: #selector(handleAppearanceChange),
+			name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+			object: nil
+		)
 
 		Task {
 			await soundEffect.preloadSounds()
@@ -100,6 +107,19 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+	private func configureDockIconForAppearance() {
+		let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+		let iconName = isDark ? "OctoDarkIcon" : "OctoLightIcon"
+		guard
+			let iconURL = Bundle.main.url(forResource: iconName, withExtension: "png"),
+			let icon = NSImage(contentsOf: iconURL)
+		else {
+			appLogger.error("Unable to load \(iconName) app icon")
+			return
+		}
+		NSApp.applicationIconImage = icon
+	}
+
 	func presentMainView() {
 		guard invisibleWindow == nil else {
 			return
@@ -157,6 +177,10 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 		presentSettingsView()
 	}
 
+	@objc private func handleAppearanceChange() {
+		configureDockIconForAppearance()
+	}
+
 	@MainActor
 	private func updateAppMode() {
 		appLogger.debug("showDockIcon = \(self.hexSettings.showDockIcon)")
@@ -173,6 +197,11 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	func applicationWillTerminate(_: Notification) {
+		DistributedNotificationCenter.default().removeObserver(
+			self,
+			name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+			object: nil
+		)
 		// Wait for audio teardown before the process exits: a fire-and-forget Task here
 		// raced process exit, crashing inside AVAudioEngine teardown while tap callbacks
 		// were still in flight (#245). Pump the main run loop while waiting instead of
